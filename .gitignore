@@ -1,0 +1,25 @@
+# Environment
+.env
+
+# Audio files (too large for git)
+audio/
+*.mp3
+
+# Generated files
+transcripten/
+artikelen/
+logs/
+*.pdf
+
+# System files
+.DS_Store
+__pycache__/
+*.pyc
+
+# Local state (processed_episodes stored in feeds repo for cloud)
+processed_episodes.json
+failed_episodes.json
+status.json
+
+# Feeds (separate repo)
+feeds/
