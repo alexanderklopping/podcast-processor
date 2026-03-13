@@ -1,12 +1,15 @@
-name: Process Podcasts
+name: On-Demand Command
 
 on:
-  schedule:
-    - cron: '0 7 * * *'  # 09:00 CET (07:00 UTC)
   workflow_dispatch:
+    inputs:
+      command:
+        description: 'Mediaverwerker command (natural language or subcommand)'
+        required: true
+        type: string
 
 jobs:
-  process:
+  run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -35,12 +38,12 @@ jobs:
             cp feeds/processed_episodes.json processed_episodes.json
           fi
 
-      - name: Run mediaverwerker
+      - name: Run command
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           IS_CLOUD: 'true'
-        run: mediaverwerker process
+        run: mediaverwerker ${{ inputs.command }}
 
       - name: Push feeds to GitHub Pages
         run: |
