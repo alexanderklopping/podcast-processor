@@ -1,0 +1,52 @@
+name: Process Podcasts
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # 09:00 CET (07:00 UTC)
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install -r requirements.txt
+
+      - name: Clone podcast-feeds repo
+        run: |
+          git clone https://x-access-token:${{ secrets.FEEDS_GITHUB_TOKEN }}@github.com/alexanderklopping/podcast-feeds.git feeds
+
+      - name: Restore processed episodes
+        run: |
+          if [ -f feeds/processed_episodes.json ]; then
+            cp feeds/processed_episodes.json processed_episodes.json
+          fi
+
+      - name: Run podcast processor
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          IS_CLOUD: 'true'
+        run: python podcast_processor.py
+
+      - name: Push feeds to GitHub Pages
+        run: |
+          cd feeds
+          cp ../processed_episodes.json . 2>/dev/null || true
+          git config user.email "podcast-processor@github.com"
+          git config user.name "Podcast Processor"
+          git add .
+          git diff --cached --quiet || git commit -m "Update feeds - $(date '+%Y-%m-%d %H:%M')"
+          git push

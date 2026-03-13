@@ -17,7 +17,6 @@ from pathlib import Path
 import feedparser
 import re
 import requests
-from fpdf import FPDF
 from openai import OpenAI
 from anthropic import Anthropic
 from dotenv import dotenv_values
@@ -245,7 +244,7 @@ def get_new_episodes_for_podcast(podcast):
     processed = load_processed_episodes()
     new_episodes = []
 
-    for entry in feed.entries:
+    for entry in feed.entries[:2]:
         guid = entry.get("id", entry.get("guid", entry.link))
         if guid not in processed:
             audio_url = None
@@ -632,101 +631,8 @@ Transformeer dit transcript naar een compelling geschreven hoofdstuk volgens de 
     return article
 
 
-class ArticlePDF(FPDF):
-    """Custom PDF class for article formatting."""
-
-    def __init__(self):
-        super().__init__()
-        # Use different font paths for cloud vs local
-        if IS_CLOUD:
-            # In Docker, use built-in fonts (no custom Unicode font)
-            self._use_builtin_fonts = True
-        else:
-            # On macOS, use Arial Unicode for full character support
-            self._use_builtin_fonts = False
-            try:
-                self.add_font('DejaVu', '', '/System/Library/Fonts/Supplemental/Arial Unicode.ttf')
-                self.add_font('DejaVu', 'B', '/System/Library/Fonts/Supplemental/Arial Unicode.ttf')
-                self.add_font('DejaVu', 'I', '/System/Library/Fonts/Supplemental/Arial Unicode.ttf')
-            except Exception:
-                self._use_builtin_fonts = True
-
-    def _set_font_safe(self, style='', size=11):
-        """Set font with fallback for cloud environment."""
-        if self._use_builtin_fonts:
-            # Use Helvetica (built-in) - limited Unicode but works everywhere
-            self.set_font('Helvetica', style, size)
-        else:
-            self.set_font('DejaVu', style, size)
-
-    def header(self):
-        pass
-
-    def footer(self):
-        self.set_y(-15)
-        self._set_font_safe('', 9)
-        self.set_text_color(128)
-        self.cell(0, 10, str(self.page_no()), align='C')
-
-
-def markdown_to_pdf(markdown_text, pdf_path, title):
-    """Convert markdown text to a nicely formatted PDF."""
-    pdf = ArticlePDF()
-    pdf.set_auto_page_break(auto=True, margin=20)
-    pdf.add_page()
-    pdf.set_margins(25, 20, 25)
-
-    lines = markdown_text.split('\n')
-    first_para = True
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            pdf.ln(4)
-            continue
-
-        # H1 title
-        if line.startswith('# '):
-            pdf._set_font_safe('B', 20)
-            pdf.set_text_color(0)
-            text = line[2:]
-            pdf.multi_cell(0, 10, text)
-            pdf.ln(5)
-
-        # H2 subtitle
-        elif line.startswith('## '):
-            pdf.ln(5)
-            pdf._set_font_safe('B', 14)
-            pdf.set_text_color(50)
-            text = line[3:]
-            pdf.multi_cell(0, 8, text)
-            pdf.ln(3)
-
-        # Italic intro (starts with *)
-        elif line.startswith('*') and line.endswith('*') and not line.startswith('**'):
-            pdf._set_font_safe('I', 11)
-            pdf.set_text_color(60)
-            text = line.strip('*')
-            pdf.multi_cell(0, 6, text)
-            pdf.ln(5)
-            first_para = True
-
-        # Regular paragraph
-        else:
-            pdf._set_font_safe('', 11)
-            pdf.set_text_color(30)
-            # Remove markdown formatting
-            text = re.sub(r'\*\*(.+?)\*\*', r'\1', line)  # bold
-            text = re.sub(r'\*(.+?)\*', r'\1', text)  # italic
-            text = re.sub(r'_(.+?)_', r'\1', text)  # italic underscore
-            pdf.multi_cell(0, 6, text)
-            first_para = False
-
-    pdf.output(pdf_path)
-
-
 def save_article(episode, article):
-    """Save article as both Markdown and PDF."""
+    """Save article as Markdown."""
     date_str = datetime.now().strftime("%Y-%m-%d")
     podcast_name = episode.get("podcast_name", "unknown")
     base_filename = f"{date_str}_{podcast_name}_{sanitize_filename(episode['title'])}"
@@ -736,14 +642,6 @@ def save_article(episode, article):
     with open(md_filepath, "w", encoding="utf-8") as f:
         f.write(article)
     logger.info(f"Markdown saved: {base_filename}.md")
-
-    # Convert to PDF
-    try:
-        pdf_filepath = ARTICLES_DIR / f"{base_filename}.pdf"
-        markdown_to_pdf(article, str(pdf_filepath), episode['title'])
-        logger.info(f"PDF saved: {base_filename}.pdf")
-    except Exception as e:
-        logger.warning(f"Failed to create PDF: {e}")
 
     return md_filepath
 
