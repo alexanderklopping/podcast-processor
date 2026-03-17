@@ -1,6 +1,7 @@
 """RSS feed generation and GitHub publishing."""
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -166,10 +167,14 @@ def setup_feeds_repo_for_cloud():
         FEEDS_DIR.mkdir(exist_ok=True)
         repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/alexanderklopping/podcast-feeds.git"
         try:
-            subprocess.run(["git", "clone", repo_url, str(FEEDS_DIR)], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "clone", repo_url, str(FEEDS_DIR)],
+                check=True, capture_output=True,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            )
             logger.info("Repository cloned successfully")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to clone repository: {e}")
+        except subprocess.CalledProcessError:
+            logger.error("Failed to clone podcast-feeds repository (check GITHUB_TOKEN)")
             return False
 
     feeds_processed_file = FEEDS_DIR / "processed_episodes.json"
@@ -212,6 +217,6 @@ def push_feeds_to_github():
         logger.info("Feeds pushed to GitHub successfully")
         return True
 
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Git operation failed: {e}")
+    except subprocess.CalledProcessError:
+        logger.error("Git operation failed (push feeds)")
         return False
