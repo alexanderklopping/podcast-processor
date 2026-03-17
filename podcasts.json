@@ -33,5 +33,10 @@
     "name": "Plain English",
     "url": "https://feeds.megaphone.fm/plain-english",
     "language": "en"
+  },
+  {
+    "name": "Pivot",
+    "url": "https://feeds.megaphone.fm/pivot",
+    "language": "en"
   }
 ]
