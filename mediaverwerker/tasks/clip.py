@@ -1,7 +1,9 @@
 """Video/audio clipping and subtitle generation via ffmpeg."""
 
 import logging
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from ..util import format_timestamp, format_srt_timestamp
@@ -101,23 +103,30 @@ def burn_subtitles(input_path, srt_path, output_path):
 
     logger.info("Burning subtitles...")
 
-    srt_escaped = str(srt_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    # Copy SRT to a temp file with a safe path to avoid ffmpeg filter injection
+    with tempfile.NamedTemporaryFile(suffix=".srt", delete=False, mode="w", encoding="utf-8") as tmp:
+        tmp.write(srt_path.read_text(encoding="utf-8"))
+        safe_srt = tmp.name
 
-    subtitle_filter = (
-        f"subtitles='{srt_escaped}'"
-        f":force_style='FontSize=24,FontName=Arial,"
-        f"PrimaryColour=&HFFFFFF,OutlineColour=&H000000,"
-        f"Outline=2,Shadow=1'"
-    )
+    try:
+        # Use safe temp path — no special characters to escape
+        subtitle_filter = (
+            f"subtitles='{safe_srt}'"
+            f":force_style='FontSize=24,FontName=Arial,"
+            f"PrimaryColour=&HFFFFFF,OutlineColour=&H000000,"
+            f"Outline=2,Shadow=1'"
+        )
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(input_path),
-        "-vf", subtitle_filter,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-        "-c:a", "copy",
-        str(output_path),
-    ]
-    subprocess.run(cmd, capture_output=True, check=True)
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(input_path),
+            "-vf", subtitle_filter,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c:a", "copy",
+            str(output_path),
+        ]
+        subprocess.run(cmd, capture_output=True, check=True)
+    finally:
+        Path(safe_srt).unlink(missing_ok=True)
     logger.info(f"Video with subtitles: {output_path.name}")
     return output_path

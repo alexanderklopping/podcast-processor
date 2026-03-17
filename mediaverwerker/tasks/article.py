@@ -38,7 +38,7 @@ Schrijf als een Nederlandse native speaker die literaire non-fictie schrijft:
 
 **Length**
 
-As long as the story warrants. Use your judgment based on the episode's length and insight density. Quality and completeness over brevity. This is meant to be a satisfying read, not a skim.
+CRITICAL: Write at the length specified in the user message. The reader wants the FULL story with ALL details, anecdotes, quotes, and insights preserved. Do NOT summarize or compress. If the transcript contains 10 interesting anecdotes, include all 10. If a speaker makes 8 distinct points, cover all 8 in depth. Longer is better than shorter — the reader chose to read this because they want the complete story, not a summary.
 
 **Step 1: Understand the Arc**
 
@@ -131,6 +131,52 @@ Before you finish, ask yourself:
 If yes to all, you've succeeded."""
 
 
+SECTION_THRESHOLD = 10000  # Split transcripts longer than this into sections
+
+
+def _call_claude(client, system_prompt, user_prompt, max_tokens=32000, thinking_budget=16000):
+    """Call Claude with streaming and extended thinking."""
+    article_parts = []
+    with client.messages.stream(
+        model="claude-sonnet-4-20250514",
+        max_tokens=max_tokens,
+        thinking={
+            "type": "enabled",
+            "budget_tokens": thinking_budget,
+        },
+        system=system_prompt,
+        messages=[
+            {"role": "user", "content": user_prompt}
+        ]
+    ) as stream:
+        for event in stream:
+            if event.type == "content_block_delta" and hasattr(event.delta, "text"):
+                article_parts.append(event.delta.text)
+    return "".join(article_parts)
+
+
+def _split_transcript(text, max_words=4000):
+    """Split transcript into sections at paragraph boundaries."""
+    paragraphs = text.split("\n\n")
+    sections = []
+    current = []
+    current_words = 0
+
+    for para in paragraphs:
+        para_words = len(para.split())
+        if current_words + para_words > max_words and current:
+            sections.append("\n\n".join(current))
+            current = [para]
+            current_words = para_words
+        else:
+            current.append(para)
+            current_words += para_words
+
+    if current:
+        sections.append("\n\n".join(current))
+    return sections
+
+
 @retry_with_backoff(max_retries=3, delay=5)
 def create_article(episode, transcript):
     """Convert transcript to article using Claude."""
@@ -138,12 +184,25 @@ def create_article(episode, transcript):
 
     text = transcript if isinstance(transcript, str) else transcript.get("text", "")
     client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    word_count = len(text.split())
+
+    if word_count <= SECTION_THRESHOLD:
+        return _create_article_single(client, episode, text, word_count)
+    else:
+        return _create_article_sections(client, episode, text, word_count)
+
+
+def _create_article_single(client, episode, text, word_count):
+    """Generate article in a single call for shorter transcripts."""
+    target_words = min(int(word_count * 0.85), max(1500, int(word_count * 0.67)))
 
     user_prompt = f"""Hier is een podcast aflevering om te transformeren naar een geschreven hoofdstuk:
 
 **Titel:** {episode['title']}
 **Gepubliceerd:** {episode['published']}
 **Beschrijving:** {episode['description']}
+
+**Lengte-richtlijn:** Dit transcript bevat {word_count} woorden. Schrijf een artikel van minimaal {target_words} woorden maar niet meer dan {int(word_count * 0.85)} woorden. Sla reclames, sponsorvermeldingen en promoties over. Bewaar alle inhoudelijke details, anekdotes en citaten. De lezer wil het volledige verhaal zonder compressie, maar geen opvulling.
 
 ---
 
@@ -155,17 +214,56 @@ def create_article(episode, transcript):
 
 Transformeer dit transcript naar een compelling geschreven hoofdstuk volgens de instructies. Schrijf ALTIJD in het Nederlands, ook als het transcript in het Engels is."""
 
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=8192,
-        system=PODCAST_TO_ARTICLE_SYSTEM_PROMPT,
-        messages=[
-            {"role": "user", "content": user_prompt}
-        ]
-    )
+    article = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, user_prompt)
+    logger.info(f"Article created: {len(article.split())} words")
+    return article
 
-    article = message.content[0].text
-    logger.info("Article created")
+
+def _create_article_sections(client, episode, text, word_count):
+    """Generate article in sections for long transcripts, then combine."""
+    sections = _split_transcript(text)
+    target_per_section = max(1500, int(len(sections[0].split()) * 0.67))
+    total_target = max(1500, int(word_count * 0.67))
+
+    logger.info(f"Long transcript ({word_count} words) — splitting into {len(sections)} sections")
+
+    # Generate each section as a chapter part
+    parts = []
+    for i, section in enumerate(sections):
+        section_words = len(section.split())
+        section_target = max(1000, int(section_words * 0.75))
+        is_first = i == 0
+        is_last = i == len(sections) - 1
+
+        section_prompt = f"""Hier is **deel {i + 1} van {len(sections)}** van een podcast aflevering.
+
+**Titel:** {episode['title']}
+**Gepubliceerd:** {episode['published']}
+**Beschrijving:** {episode['description']}
+
+**Context:** Het volledige transcript bevat {word_count} woorden. Dit deel bevat {section_words} woorden. Het doelartikel moet minimaal {total_target} woorden zijn in totaal.
+
+**Instructie voor dit deel:** Schrijf minimaal {section_target} woorden voor dit deel. Sla reclames, sponsorvermeldingen en promoties over. Bewaar alle inhoudelijke details, anekdotes en citaten.
+{"Begin met een pakkende titel en openingsscène." if is_first else "Ga naadloos verder waar het vorige deel eindigde. Geen nieuwe titel of inleiding."}
+{"Eindig met een krachtige afsluiting die het hele verhaal samenbrengt." if is_last else "Eindig op een natuurlijk punt — het verhaal gaat verder in het volgende deel."}
+
+---
+
+**TRANSCRIPT (deel {i + 1}/{len(sections)}):**
+
+{section}
+
+---
+
+Schrijf ALTIJD in het Nederlands, ook als het transcript in het Engels is."""
+
+        logger.info(f"Generating section {i + 1}/{len(sections)} ({section_words} words)...")
+        part = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, section_prompt)
+        parts.append(part)
+        logger.info(f"Section {i + 1} done: {len(part.split())} words")
+
+    article = "\n\n".join(parts)
+    logger.info(f"Article created: {len(article.split())} words from {len(sections)} sections")
     return article
 
 

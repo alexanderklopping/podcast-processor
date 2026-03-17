@@ -96,8 +96,24 @@ def parse_command(user_input):
 
     try:
         result = json.loads(response_text)
-        logger.info(f"Parsed command: {result.get('description', '')}")
-        return result
     except json.JSONDecodeError:
         logger.error(f"Failed to parse NLP response: {response_text}")
         return {"actions": [], "description": "Could not parse command", "error": True}
+
+    # Validate structure
+    ALLOWED_ACTIONS = {"process_all", "process_episode", "adhoc_episode", "find_segment", "clip", "feeds_update"}
+    if not isinstance(result.get("actions"), list):
+        return {"actions": [], "description": "Invalid response structure", "error": True}
+
+    validated_actions = []
+    for action in result["actions"]:
+        if not isinstance(action, dict):
+            continue
+        if action.get("type") not in ALLOWED_ACTIONS:
+            logger.warning(f"Skipping unknown action type: {action.get('type')}")
+            continue
+        validated_actions.append(action)
+
+    result["actions"] = validated_actions
+    logger.info(f"Parsed command: {result.get('description', '')}")
+    return result
