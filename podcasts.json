@@ -28,5 +28,10 @@
     "name": "Hard Fork",
     "url": "https://feeds.simplecast.com/6HKOhNgS",
     "language": "en"
+  },
+  {
+    "name": "Plain English",
+    "url": "https://feeds.megaphone.fm/plain-english",
+    "language": "en"
   }
 ]
