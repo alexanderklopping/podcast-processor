@@ -132,9 +132,11 @@ If yes to all, you've succeeded."""
 
 
 SECTION_THRESHOLD = 10000  # Split transcripts longer than this into sections
+SECTION_SIZE = 2500  # Target words per section (smaller = more achievable per-section targets)
+MIN_ARTICLE_RATIO = 0.67  # Article must be at least 67% of transcript word count
 
 
-def _call_claude(client, system_prompt, user_prompt, max_tokens=32000, thinking_budget=16000):
+def _call_claude(client, system_prompt, user_prompt, max_tokens=48000, thinking_budget=10000):
     """Call Claude with streaming and extended thinking."""
     article_parts = []
     with client.messages.stream(
@@ -155,9 +157,44 @@ def _call_claude(client, system_prompt, user_prompt, max_tokens=32000, thinking_
     return "".join(article_parts)
 
 
-def _split_transcript(text, max_words=4000):
-    """Split transcript into sections at paragraph boundaries."""
+def _strip_transcript_metadata(text):
+    """Remove header metadata (title, source, URL, ---) from transcript text."""
+    import re
+    # Match common header patterns: lines starting with #, Bron:, Gepubliceerd:, URL:, ---
+    lines = text.split("\n")
+    content_start = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("Bron:") or \
+           stripped.startswith("Gepubliceerd:") or stripped.startswith("URL:") or \
+           stripped == "---" or stripped == "":
+            content_start = i + 1
+        else:
+            break
+    return "\n".join(lines[content_start:]).strip()
+
+
+def _split_transcript(text, max_words=None):
+    """Split transcript into roughly equal sections at natural boundaries."""
+    if max_words is None:
+        max_words = SECTION_SIZE
+
+    import re
+
+    # Strip metadata header first
+    text = _strip_transcript_metadata(text)
+
+    # Build list of chunks at the finest available granularity
     paragraphs = text.split("\n\n")
+    if len(paragraphs) < 3:
+        paragraphs = text.split("\n")
+    if len(paragraphs) < 3:
+        paragraphs = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
+
+    # Filter out empty chunks
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+    # Group chunks into sections of ~max_words
     sections = []
     current = []
     current_words = 0
@@ -165,7 +202,7 @@ def _split_transcript(text, max_words=4000):
     for para in paragraphs:
         para_words = len(para.split())
         if current_words + para_words > max_words and current:
-            sections.append("\n\n".join(current))
+            sections.append(" ".join(current))
             current = [para]
             current_words = para_words
         else:
@@ -173,8 +210,29 @@ def _split_transcript(text, max_words=4000):
             current_words += para_words
 
     if current:
-        sections.append("\n\n".join(current))
-    return sections
+        sections.append(" ".join(current))
+
+    # Force-split any section that's still too large
+    final_sections = []
+    for section in sections:
+        words = section.split()
+        if len(words) > max_words * 1.5:
+            for i in range(0, len(words), max_words):
+                chunk = " ".join(words[i:i + max_words])
+                if chunk.strip():
+                    final_sections.append(chunk)
+        else:
+            final_sections.append(section)
+
+    # Merge any tiny sections (< 200 words) into their neighbor
+    merged = []
+    for section in final_sections:
+        if merged and len(section.split()) < 200:
+            merged[-1] = merged[-1] + " " + section
+        else:
+            merged.append(section)
+
+    return merged
 
 
 @retry_with_backoff(max_retries=3, delay=5)
@@ -187,14 +245,23 @@ def create_article(episode, transcript):
     word_count = len(text.split())
 
     if word_count <= SECTION_THRESHOLD:
-        return _create_article_single(client, episode, text, word_count)
+        article = _create_article_single(client, episode, text, word_count)
     else:
-        return _create_article_sections(client, episode, text, word_count)
+        article = _create_article_sections(client, episode, text, word_count)
+
+    # Final expansion pass if still too short
+    article_words = len(article.split())
+    target = max(1500, int(word_count * MIN_ARTICLE_RATIO))
+    if article_words < target * 0.9:
+        logger.warning(f"Article {article_words} words, target {target}. Running expansion pass...")
+        article = _expand_article(client, episode, text, article, word_count, target)
+
+    return article
 
 
 def _create_article_single(client, episode, text, word_count):
     """Generate article in a single call for shorter transcripts."""
-    target_words = min(int(word_count * 0.85), max(1500, int(word_count * 0.67)))
+    target_words = max(1500, int(word_count * MIN_ARTICLE_RATIO))
 
     user_prompt = f"""Hier is een podcast aflevering om te transformeren naar een geschreven hoofdstuk:
 
@@ -202,7 +269,7 @@ def _create_article_single(client, episode, text, word_count):
 **Gepubliceerd:** {episode['published']}
 **Beschrijving:** {episode['description']}
 
-**Lengte-richtlijn:** Dit transcript bevat {word_count} woorden. Schrijf een artikel van minimaal {target_words} woorden maar niet meer dan {int(word_count * 0.85)} woorden. Sla reclames, sponsorvermeldingen en promoties over. Bewaar alle inhoudelijke details, anekdotes en citaten. De lezer wil het volledige verhaal zonder compressie, maar geen opvulling.
+**LENGTE-VEREISTE (VERPLICHT):** Dit transcript bevat {word_count} woorden. Je artikel MOET minimaal {target_words} woorden bevatten. Dit is een harde ondergrens, geen richtlijn. Verwerk ALLE inhoudelijke details, anekdotes, voorbeelden, redeneringen en citaten uit het transcript. Vat NIET samen — vertel het volledige verhaal met alle nuances. Sla alleen reclames, sponsorvermeldingen en promoties over.
 
 ---
 
@@ -212,59 +279,106 @@ def _create_article_single(client, episode, text, word_count):
 
 ---
 
-Transformeer dit transcript naar een compelling geschreven hoofdstuk volgens de instructies. Schrijf ALTIJD in het Nederlands, ook als het transcript in het Engels is."""
+Transformeer dit transcript naar een compelling geschreven hoofdstuk volgens de instructies. Schrijf ALTIJD in het Nederlands, ook als het transcript in het Engels is. Schrijf minimaal {target_words} woorden."""
 
     article = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, user_prompt)
-    logger.info(f"Article created: {len(article.split())} words")
+    article_words = len(article.split())
+    logger.info(f"Article created: {article_words} words (target: {target_words})")
     return article
 
 
-def _create_article_sections(client, episode, text, word_count):
-    """Generate article in sections for long transcripts, then combine."""
-    sections = _split_transcript(text)
-    target_per_section = max(1500, int(len(sections[0].split()) * 0.67))
-    total_target = max(1500, int(word_count * 0.67))
+def _generate_section(client, episode, section, section_index, total_sections, word_count, total_target):
+    """Generate a single section."""
+    section_words = len(section.split())
+    section_target = max(1200, int(section_words * 0.75))
+    is_first = section_index == 0
+    is_last = section_index == total_sections - 1
 
-    logger.info(f"Long transcript ({word_count} words) — splitting into {len(sections)} sections")
-
-    # Generate each section as a chapter part
-    parts = []
-    for i, section in enumerate(sections):
-        section_words = len(section.split())
-        section_target = max(1000, int(section_words * 0.75))
-        is_first = i == 0
-        is_last = i == len(sections) - 1
-
-        section_prompt = f"""Hier is **deel {i + 1} van {len(sections)}** van een podcast aflevering.
+    section_prompt = f"""Hier is **deel {section_index + 1} van {total_sections}** van een podcast aflevering.
 
 **Titel:** {episode['title']}
 **Gepubliceerd:** {episode['published']}
 **Beschrijving:** {episode['description']}
 
-**Context:** Het volledige transcript bevat {word_count} woorden. Dit deel bevat {section_words} woorden. Het doelartikel moet minimaal {total_target} woorden zijn in totaal.
+**Context:** Het volledige transcript bevat {word_count} woorden, verdeeld over {total_sections} delen. Het volledige artikel moet minimaal {total_target} woorden zijn.
 
-**Instructie voor dit deel:** Schrijf minimaal {section_target} woorden voor dit deel. Sla reclames, sponsorvermeldingen en promoties over. Bewaar alle inhoudelijke details, anekdotes en citaten.
+**LENGTE-VEREISTE (VERPLICHT):** Dit deel bevat {section_words} woorden transcript. Je MOET minimaal {section_target} woorden schrijven voor dit deel. Verwerk ALLE details, anekdotes, redeneringen en citaten. Dit is geen samenvatting — het is een uitgebreide hervertelling van alles wat besproken wordt. Sla alleen reclames en sponsorvermeldingen over.
 {"Begin met een pakkende titel en openingsscène." if is_first else "Ga naadloos verder waar het vorige deel eindigde. Geen nieuwe titel of inleiding."}
 {"Eindig met een krachtige afsluiting die het hele verhaal samenbrengt." if is_last else "Eindig op een natuurlijk punt — het verhaal gaat verder in het volgende deel."}
 
 ---
 
-**TRANSCRIPT (deel {i + 1}/{len(sections)}):**
+**TRANSCRIPT (deel {section_index + 1}/{total_sections}):**
 
 {section}
 
 ---
 
-Schrijf ALTIJD in het Nederlands, ook als het transcript in het Engels is."""
+Schrijf in het Nederlands. Minimaal {section_target} woorden."""
 
+    part = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, section_prompt)
+    part_words = len(part.split())
+    logger.info(f"Section {section_index + 1}: {part_words} words (target: {section_target})")
+    return part
+
+
+def _create_article_sections(client, episode, text, word_count):
+    """Generate article in sections for long transcripts, then combine."""
+    sections = _split_transcript(text)
+    total_target = max(1500, int(word_count * MIN_ARTICLE_RATIO))
+
+    logger.info(f"Long transcript ({word_count} words) — splitting into {len(sections)} sections, total target: {total_target} words")
+
+    parts = []
+    for i, section in enumerate(sections):
+        section_words = len(section.split())
         logger.info(f"Generating section {i + 1}/{len(sections)} ({section_words} words)...")
-        part = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, section_prompt)
+        part = _generate_section(client, episode, section, i, len(sections), word_count, total_target)
         parts.append(part)
-        logger.info(f"Section {i + 1} done: {len(part.split())} words")
 
     article = "\n\n".join(parts)
-    logger.info(f"Article created: {len(article.split())} words from {len(sections)} sections")
+    total_words = len(article.split())
+    logger.info(f"Article created: {total_words} words from {len(sections)} sections (target was {total_target})")
     return article
+
+
+def _expand_article(client, episode, transcript_text, article, transcript_words, target_words):
+    """Expansion pass: identify missing content from transcript and add it to the article."""
+    article_words = len(article.split())
+    shortfall = target_words - article_words
+
+    logger.info(f"Expansion pass: article is {article_words} words, need {shortfall} more to reach {target_words}")
+
+    expand_prompt = f"""Je hebt eerder een artikel geschreven op basis van een podcast transcript, maar het is te kort.
+
+**Huidige artikel:** {article_words} woorden
+**Vereist minimum:** {target_words} woorden
+**Tekort:** {shortfall} woorden
+
+**Taak:** Herschrijf en BREID het artikel uit. Vergelijk het artikel met het originele transcript hieronder en identificeer ALLE onderwerpen, anekdotes, citaten, voorbeelden en redeneringen die ontbreken of te kort samengevat zijn. Voeg deze toe en schrijf alles uit. Het resultaat moet minimaal {target_words} woorden zijn.
+
+---
+
+**HUIDIG ARTIKEL:**
+
+{article}
+
+---
+
+**ORIGINEEL TRANSCRIPT ({transcript_words} woorden):**
+
+{transcript_text}
+
+---
+
+Herschrijf het artikel in het Nederlands. Behoud de narratieve stijl en structuur, maar breid ALLES uit. Minimaal {target_words} woorden."""
+
+    expanded = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, expand_prompt)
+    expanded_words = len(expanded.split())
+    logger.info(f"Expansion result: {expanded_words} words (was {article_words}, target {target_words})")
+
+    # Return the longer version
+    return expanded if expanded_words > article_words else article
 
 
 def save_article(episode, article):
