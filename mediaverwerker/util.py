@@ -1,6 +1,7 @@
 """Shared utilities: retry, sanitize, logging, ffmpeg helpers."""
 
 import logging
+import re
 import subprocess
 import sys
 import time
@@ -72,6 +73,16 @@ def sanitize_filename(title):
     """Create a safe filename from a title string."""
     safe = "".join(c if c.isalnum() or c in " -_" else "_" for c in title)
     return safe[:100].strip()
+
+
+def extract_urls(text):
+    """Extract HTTP(S) URLs from free text."""
+    return re.findall(r'https?://[^\s<>"\')]+', text)
+
+
+def is_url(text):
+    """Return True if the input is a standalone HTTP(S) URL."""
+    return bool(re.fullmatch(r'https?://[^\s<>"\')]+', text.strip()))
 
 
 def get_audio_duration(audio_path):
