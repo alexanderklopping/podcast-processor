@@ -38,5 +38,10 @@
     "name": "Pivot",
     "url": "https://feeds.megaphone.fm/pivot",
     "language": "en"
+  },
+  {
+    "name": "The Startup Ideas Podcast",
+    "url": "https://rss2.flightcast.com/ordbkg8yojpehffas7vr7qpc.xml",
+    "language": "en"
   }
 ]

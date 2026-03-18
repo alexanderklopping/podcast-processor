@@ -20,6 +20,11 @@ Available actions:
 - "process_episode": Process a specific episode from a CONFIGURED podcast
   - podcast: podcast name (must be from the configured list below)
   - date: date string (ISO format, or "yesterday"/"today")
+- "process_url": Download and process a single media URL into the "Individuele Afleveringen" feed
+  - url: media URL (YouTube, direct episode URL, or any yt-dlp supported page)
+  - topic: topic to find in transcript (optional)
+  - output: "article" (default) or "transcript"
+  - output_dir: where to save files (optional, e.g., "~/Desktop")
 - "adhoc_episode": Download and process an episode from ANY podcast (not limited to configured ones)
   - podcast_query: the podcast name to search for (e.g., "Hard Fork", "Lex Fridman")
   - date: date string (optional, ISO format or "yesterday"/"today")
@@ -42,6 +47,7 @@ CONFIGURED (recurring) podcasts:
 {podcasts}
 
 IMPORTANT: Any podcast NOT in the configured list should use "adhoc_episode", not "process_episode" or "find_segment". The tool will automatically search for the podcast's RSS feed. You can handle ANY podcast - you are not limited to the list above.
+IMPORTANT: If the user gives a concrete URL to one specific episode or video, use "process_url" instead of searching by podcast name.
 
 Today's date: {today}
 
@@ -55,6 +61,8 @@ Return ONLY valid JSON in this format:
 
 Examples:
 - "verwerk alles" -> {{"actions": [{{"type": "process_all"}}], "description": "Alle nieuwe afleveringen verwerken"}}
+- "https://www.youtube.com/watch?v=dQw4w9WgXcQ" -> {{"actions": [{{"type": "process_url", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "output": "article"}}], "description": "Losse URL verwerken en publiceren in de feed met individuele afleveringen"}}
+- "verwerk deze url en zet transcript op mijn desktop: https://example.com/episode" -> {{"actions": [{{"type": "process_url", "url": "https://example.com/episode", "output": "transcript", "output_dir": "~/Desktop"}}], "description": "Losse URL verwerken en transcript opslaan op Desktop"}}
 - "download hard fork van gisteren en transcript over Anthropic" -> {{"actions": [{{"type": "adhoc_episode", "podcast_query": "Hard Fork", "date": "yesterday", "topic": "Anthropic", "output": "transcript"}}], "description": "Hard Fork van gisteren downloaden, segment over Anthropic zoeken"}}
 - "download de laatste hardfork en zet de file op m'n desktop incl transcript" -> {{"actions": [{{"type": "adhoc_episode", "podcast_query": "Hard Fork", "output": "transcript", "output_dir": "~/Desktop"}}], "description": "Laatste Hard Fork downloaden naar Desktop met transcript"}}
 - "geef me het stuk over AI regulation uit de laatste dwarkesh" -> {{"actions": [{{"type": "find_segment", "podcast": "Dwarkesh", "topic": "AI regulation", "output": "transcript"}}], "description": "AI regulation segment zoeken in laatste Dwarkesh"}}
@@ -101,7 +109,7 @@ def parse_command(user_input):
         return {"actions": [], "description": "Could not parse command", "error": True}
 
     # Validate structure
-    ALLOWED_ACTIONS = {"process_all", "process_episode", "adhoc_episode", "find_segment", "clip", "feeds_update"}
+    ALLOWED_ACTIONS = {"process_all", "process_episode", "process_url", "adhoc_episode", "find_segment", "clip", "feeds_update"}
     if not isinstance(result.get("actions"), list):
         return {"actions": [], "description": "Invalid response structure", "error": True}
 

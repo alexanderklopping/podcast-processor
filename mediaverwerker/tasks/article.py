@@ -270,11 +270,20 @@ Schrijf ALTIJD in het Nederlands, ook als het transcript in het Engels is."""
 def save_article(episode, article):
     """Save article as Markdown."""
     date_str = datetime.now().strftime("%Y-%m-%d")
-    podcast_name = episode.get("podcast_name", "unknown")
-    base_filename = f"{date_str}_{podcast_name}_{sanitize_filename(episode['title'])}"
+    storage_key = episode.get("feed_storage_key") or episode.get("podcast_name", "unknown")
+    base_filename = f"{date_str}_{storage_key}_{sanitize_filename(episode['title'])}"
 
     md_filepath = ARTICLES_DIR / f"{base_filename}.md"
     with open(md_filepath, "w", encoding="utf-8") as f:
+        metadata_lines = []
+        for key in ("feed_storage_key", "source_url", "podcast_name", "guid"):
+            value = episode.get(key)
+            if value:
+                metadata_lines.append(f"{key}: {value}")
+        if metadata_lines:
+            f.write("<!--\n")
+            f.write("\n".join(metadata_lines))
+            f.write("\n-->\n\n")
         f.write(article)
     logger.info(f"Markdown saved: {base_filename}.md")
 

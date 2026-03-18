@@ -9,11 +9,13 @@ import typer
 
 from .config import init, validate_environment
 from .util import setup_logging
+from .util import is_url
 from .nlp import parse_command
 from .pipeline import (
     run_full_pipeline,
     process_and_extract,
     process_adhoc_episode,
+    process_individual_url,
     find_episode_by_name_and_date,
     process_episode,
 )
@@ -39,6 +41,7 @@ def _init():
 @app.command("process")
 def cmd_process(
     podcast: Optional[str] = typer.Option(None, "--podcast", "-p", help="Podcast name"),
+    url: Optional[str] = typer.Option(None, "--url", "-u", help="Individual media URL"),
     date: Optional[str] = typer.Option(None, "--date", "-d", help="Episode date (e.g., 'yesterday', '2026-03-12')"),
     topic: Optional[str] = typer.Option(None, "--topic", "-t", help="Topic to extract"),
     output: str = typer.Option("article", "--output", "-o", help="Output format: transcript, article, clip"),
@@ -49,7 +52,22 @@ def cmd_process(
     if not validate_environment():
         raise typer.Exit(1)
 
-    if podcast:
+    if url:
+        result = process_individual_url(url, topic=topic, output_format=output)
+        if result.get("error"):
+            typer.echo(f"Error: {result['error']}")
+            raise typer.Exit(1)
+        if result.get("segment_text"):
+            typer.echo(f"\n--- Segment over '{topic}' ---")
+            typer.echo(result["segment_text"])
+            typer.echo("---")
+        elif result.get("already_processed"):
+            typer.echo(f"Al aanwezig in feed: {result.get('episode', {}).get('title', '?')}")
+        else:
+            typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
+        if result.get("feed_url"):
+            typer.echo(f"Feed: {result['feed_url']}")
+    elif podcast:
         result = process_and_extract(podcast, date=date, topic=topic, output_format=output)
         if "error" in result:
             typer.echo(f"Error: {result['error']}")
@@ -150,6 +168,17 @@ def cmd_run(
         raise typer.Exit(1)
 
     typer.echo(f"Parsing: {command}")
+
+    if is_url(command):
+        result = process_individual_url(command)
+        if result.get("error"):
+            typer.echo(f"Error: {result['error']}")
+            raise typer.Exit(1)
+        typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
+        if result.get("feed_url"):
+            typer.echo(f"Feed: {result['feed_url']}")
+        return
+
     parsed = parse_command(command)
 
     if parsed.get("error"):
@@ -170,6 +199,22 @@ def cmd_run(
                 process_episode(episode)
             else:
                 typer.echo(f"Episode not found: {action}")
+
+        elif action_type == "process_url":
+            result = process_individual_url(
+                url=action.get("url", ""),
+                topic=action.get("topic"),
+                output_format=action.get("output", "article"),
+                output_dir=action.get("output_dir"),
+            )
+            if result.get("error"):
+                typer.echo(f"Error: {result['error']}")
+            elif result.get("already_processed"):
+                typer.echo(f"Al aanwezig in feed: {result.get('episode', {}).get('title', '?')}")
+            else:
+                typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
+            if result.get("feed_url"):
+                typer.echo(f"Feed: {result['feed_url']}")
 
         elif action_type == "find_segment":
             result = process_and_extract(
@@ -218,6 +263,16 @@ def _execute_nl(command):
     if not validate_environment():
         return
 
+    if is_url(command):
+        result = process_individual_url(command)
+        if result.get("error"):
+            typer.echo(f"Error: {result['error']}")
+        else:
+            typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
+            if result.get("feed_url"):
+                typer.echo(f"Feed: {result['feed_url']}")
+        return
+
     typer.echo(f"\nParsing...")
     parsed = parse_command(command)
 
@@ -239,6 +294,22 @@ def _execute_nl(command):
                 process_episode(episode)
             else:
                 typer.echo(f"Episode niet gevonden: {action}")
+
+        elif action_type == "process_url":
+            result = process_individual_url(
+                url=action.get("url", ""),
+                topic=action.get("topic"),
+                output_format=action.get("output", "article"),
+                output_dir=action.get("output_dir"),
+            )
+            if result.get("error"):
+                typer.echo(f"Error: {result['error']}")
+            elif result.get("already_processed"):
+                typer.echo(f"Al aanwezig in feed: {result.get('episode', {}).get('title', '?')}")
+            else:
+                typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
+            if result.get("feed_url"):
+                typer.echo(f"Feed: {result['feed_url']}")
 
         elif action_type == "find_segment":
             result = process_and_extract(

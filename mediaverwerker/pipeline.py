@@ -4,6 +4,7 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 
 import feedparser
 
@@ -13,15 +14,45 @@ from .state import (
     load_failed_episodes, save_failed_episode, remove_failed_episode,
     load_podcasts, write_status_file,
 )
-from .tasks.download import download_episode, search_podcast
+from .tasks.download import (
+    download_episode,
+    search_podcast,
+    fetch_url_metadata,
+    download_url_audio,
+)
 from .tasks.transcribe import transcribe_audio, save_transcript
 from .tasks.article import create_article, save_article
 from .tasks.segment import find_segment
 from .tasks.clip import clip_media, generate_srt
-from .tasks.feeds import update_all_rss_feeds, push_feeds_to_github, setup_feeds_repo_for_cloud
+from .tasks.feeds import (
+    update_all_rss_feeds,
+    update_individual_rss_feed,
+    push_feeds_to_github,
+    setup_feeds_repo_for_cloud,
+)
 from .util import retry_with_backoff, sanitize_filename
 
 logger = logging.getLogger("mediaverwerker")
+
+
+def _mark_episode_processed(guid):
+    """Persist a GUID once without duplicates."""
+    processed = load_processed_episodes()
+    if guid not in processed:
+        processed.append(guid)
+        save_processed_episodes(processed)
+
+
+def _entry_guid(entry):
+    """Build a stable GUID from the fields available in a feed entry."""
+    return (
+        entry.get("id")
+        or entry.get("guid")
+        or entry.get("link")
+        or entry.get("title")
+        or entry.get("published")
+        or "unknown-entry"
+    )
 
 
 @retry_with_backoff()
@@ -43,7 +74,7 @@ def get_new_episodes_for_podcast(podcast):
     new_episodes = []
 
     for entry in feed.entries[:2]:
-        guid = entry.get("id", entry.get("guid", entry.link))
+        guid = _entry_guid(entry)
         if guid not in processed:
             audio_url = None
             for enclosure in entry.get("enclosures", []):
@@ -138,7 +169,7 @@ def find_episode_by_name_and_date(podcast_name, date_str=None):
 
         if audio_url:
             return {
-                "guid": entry.get("id", entry.get("guid", entry.link)),
+                "guid": _entry_guid(entry),
                 "title": entry.title,
                 "published": entry.get("published", ""),
                 "audio_url": audio_url,
@@ -159,7 +190,7 @@ def find_episode_by_name_and_date(podcast_name, date_str=None):
                 break
         if audio_url:
             return {
-                "guid": entry.get("id", entry.get("guid", entry.link)),
+                "guid": _entry_guid(entry),
                 "title": entry.title,
                 "published": entry.get("published", ""),
                 "audio_url": audio_url,
@@ -196,9 +227,7 @@ def process_episode(episode):
         article = create_article(episode, transcript)
         save_article(episode, article)
 
-        processed = load_processed_episodes()
-        processed.append(episode["guid"])
-        save_processed_episodes(processed)
+        _mark_episode_processed(episode["guid"])
         remove_failed_episode(episode["guid"])
 
         logger.info(f"Successfully processed: {episode['title']}")
@@ -259,6 +288,94 @@ def process_and_extract(podcast_name, date=None, topic=None, output_format="tran
         result["article"] = article
 
     return result
+
+
+def process_individual_url(url, topic=None, output_format="article", output_dir=None, publish_to_feed=True):
+    """Download and process a single media URL into the individual episodes feed."""
+    import shutil
+
+    try:
+        episode = fetch_url_metadata(url)
+        logger.info(f"Processing [individual URL]: {episode['title']}")
+
+        if episode["guid"] in load_processed_episodes():
+            logger.info(f"Already processed: {episode['title']}")
+            result = {
+                "episode": episode,
+                "already_processed": True,
+            }
+            if publish_to_feed:
+                result["feed_url"] = "https://alexanderklopping.github.io/podcast-feeds/individuele-afleveringen.xml"
+            return result
+
+        audio_path = download_url_audio(url)
+        need_timestamps = topic is not None
+        transcript = transcribe_audio(audio_path, episode["language"], timestamps=need_timestamps)
+        transcript_path = save_transcript(episode, transcript)
+
+        result = {
+            "episode": episode,
+            "audio_path": str(audio_path),
+            "transcript_path": str(transcript_path),
+        }
+
+        if topic and need_timestamps:
+            segment = find_segment(transcript["segments"], topic)
+            if segment:
+                result["segment_text"] = segment["text"]
+                logger.info(f"\n--- Segment over '{topic}' ---\n{segment['text']}\n---")
+            else:
+                result["segment_text"] = None
+                logger.info(f"Topic '{topic}' niet gevonden in transcript")
+
+        article = None
+        if output_format == "article" or publish_to_feed:
+            article = create_article(episode, transcript)
+            article_path = save_article(episode, article)
+            result["article_path"] = str(article_path)
+            result["article"] = article
+
+        if output_dir:
+            out_dir = Path(output_dir).expanduser().resolve()
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            dest_audio = out_dir / audio_path.name
+            shutil.copy2(audio_path, dest_audio)
+
+            text = transcript if isinstance(transcript, str) else transcript.get("text", "")
+            dest_transcript = out_dir / f"{sanitize_filename(episode['title'])}_transcript.txt"
+            with open(dest_transcript, "w", encoding="utf-8") as f:
+                f.write(f"# {episode['title']}\n")
+                f.write(f"Bron: {episode['podcast_name']}\n")
+                f.write(f"Gepubliceerd: {episode['published']}\n")
+                f.write(f"URL: {episode['source_url']}\n\n---\n\n")
+                f.write(text)
+
+            result["output_dir"] = str(out_dir)
+            result["output_files"] = [str(dest_audio), str(dest_transcript)]
+            if article:
+                dest_article = out_dir / Path(result["article_path"]).name
+                shutil.copy2(result["article_path"], dest_article)
+                result["output_files"].append(str(dest_article))
+
+        _mark_episode_processed(episode["guid"])
+        remove_failed_episode(episode["guid"])
+
+        if publish_to_feed and article is not None:
+            if IS_CLOUD and not setup_feeds_repo_for_cloud():
+                return {"error": "Failed to setup feeds repository", "episode": episode}
+            update_individual_rss_feed()
+            push_feeds_to_github()
+            result["feed_url"] = "https://alexanderklopping.github.io/podcast-feeds/individuele-afleveringen.xml"
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error processing URL {url}: {e}", exc_info=True)
+        if "episode" in locals():
+            save_failed_episode(episode, e)
+            return {"error": str(e), "episode": episode}
+        return {"error": str(e)}
 
 
 def process_adhoc_episode(podcast_query, date=None, topic=None, output_format="transcript", output_dir=None):
@@ -363,7 +480,7 @@ def process_adhoc_episode(podcast_query, date=None, topic=None, output_format="t
         return {"error": f"Geen audio URL gevonden voor: {selected_entry.title}"}
 
     episode = {
-        "guid": selected_entry.get("id", selected_entry.get("guid", selected_entry.link)),
+        "guid": _entry_guid(selected_entry),
         "title": selected_entry.title,
         "published": selected_entry.get("published", ""),
         "audio_url": audio_url,
@@ -463,12 +580,19 @@ def retry_failed_episodes():
     logger.info(f"Retrying {len(retryable)} failed episode(s)")
 
     for guid, info in retryable.items():
+        if info.get("source_type") == "individual_url" and info.get("source_url"):
+            process_individual_url(info["source_url"])
+            continue
+
         episode = {
             "guid": guid,
             "title": info["title"],
             "audio_url": info["audio_url"],
-            "published": "",
-            "description": "",
+            "published": info.get("published", ""),
+            "description": info.get("description", ""),
+            "podcast_name": info.get("podcast_name", "unknown"),
+            "language": info.get("language", "en"),
+            "feed_storage_key": info.get("feed_storage_key"),
         }
         process_episode(episode)
 

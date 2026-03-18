@@ -56,7 +56,14 @@ def save_failed_episode(episode, error_msg):
         "audio_url": episode["audio_url"],
         "error": str(error_msg),
         "failed_at": datetime.now().isoformat(),
-        "retry_count": failed.get(episode["guid"], {}).get("retry_count", 0) + 1
+        "retry_count": failed.get(episode["guid"], {}).get("retry_count", 0) + 1,
+        "source_type": episode.get("source_type"),
+        "source_url": episode.get("source_url"),
+        "podcast_name": episode.get("podcast_name"),
+        "language": episode.get("language"),
+        "description": episode.get("description"),
+        "published": episode.get("published"),
+        "feed_storage_key": episode.get("feed_storage_key"),
     }
     with open(FAILED_FILE, "w") as f:
         json.dump(failed, f, indent=2)

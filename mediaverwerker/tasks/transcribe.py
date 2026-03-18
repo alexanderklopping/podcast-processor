@@ -114,15 +114,19 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
 
 def save_transcript(episode, transcript):
     """Save transcript to file."""
-    podcast_name = episode.get("podcast_name", "unknown")
-    filename = f"{podcast_name}_{sanitize_filename(episode['title'])}.txt"
+    storage_key = episode.get("feed_storage_key") or episode.get("podcast_name", "unknown")
+    filename = f"{storage_key}_{sanitize_filename(episode['title'])}.txt"
     filepath = TRANSCRIPTS_DIR / filename
 
     text = transcript if isinstance(transcript, str) else transcript.get("text", "")
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(f"# {episode['title']}\n")
+        if episode.get("podcast_name"):
+            f.write(f"Bron: {episode['podcast_name']}\n")
         f.write(f"Gepubliceerd: {episode['published']}\n\n")
+        if episode.get("source_url"):
+            f.write(f"URL: {episode['source_url']}\n\n")
         f.write("---\n\n")
         f.write(text)
 
