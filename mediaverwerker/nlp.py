@@ -42,9 +42,14 @@ Available actions:
   - subtitles: boolean
   - burn: boolean
 - "feeds_update": Update and push RSS feeds
+- "process_url": Process a video/audio from a direct URL (YouTube, Twitter/X, etc.)
+  - url: the full URL to process
+  - language: language code (default "en", use "nl" for Dutch content)
 
 CONFIGURED (recurring) podcasts:
 {podcasts}
+
+IMPORTANT: If the input contains a URL (starting with http:// or https://), ALWAYS use "process_url". Do NOT try to interpret a URL as a podcast name.
 
 IMPORTANT: Any podcast NOT in the configured list should use "adhoc_episode", not "process_episode" or "find_segment". The tool will automatically search for the podcast's RSS feed. You can handle ANY podcast - you are not limited to the list above.
 IMPORTANT: If the user gives a concrete URL to one specific episode or video, use "process_url" instead of searching by podcast name.
@@ -66,7 +71,9 @@ Examples:
 - "download hard fork van gisteren en transcript over Anthropic" -> {{"actions": [{{"type": "adhoc_episode", "podcast_query": "Hard Fork", "date": "yesterday", "topic": "Anthropic", "output": "transcript"}}], "description": "Hard Fork van gisteren downloaden, segment over Anthropic zoeken"}}
 - "download de laatste hardfork en zet de file op m'n desktop incl transcript" -> {{"actions": [{{"type": "adhoc_episode", "podcast_query": "Hard Fork", "output": "transcript", "output_dir": "~/Desktop"}}], "description": "Laatste Hard Fork downloaden naar Desktop met transcript"}}
 - "geef me het stuk over AI regulation uit de laatste dwarkesh" -> {{"actions": [{{"type": "find_segment", "podcast": "Dwarkesh", "topic": "AI regulation", "output": "transcript"}}], "description": "AI regulation segment zoeken in laatste Dwarkesh"}}
-- "download de laatste lex fridman" -> {{"actions": [{{"type": "adhoc_episode", "podcast_query": "Lex Fridman Podcast"}}], "description": "Laatste Lex Fridman aflevering downloaden"}}"""
+- "download de laatste lex fridman"
+- "verwerk https://youtube.com/watch?v=abc" -> {{"actions": [{{"type": "process_url", "url": "https://youtube.com/watch?v=abc", "language": "en"}}], "description": "YouTube video verwerken"}}
+- "verwerk https://x.com/user/status/123" -> {{"actions": [{{"type": "process_url", "url": "https://x.com/user/status/123", "language": "en"}}], "description": "Twitter video verwerken"}} -> {{"actions": [{{"type": "adhoc_episode", "podcast_query": "Lex Fridman Podcast"}}], "description": "Laatste Lex Fridman aflevering downloaden"}}"""
 
 
 def parse_command(user_input):

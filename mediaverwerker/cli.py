@@ -18,6 +18,7 @@ from .pipeline import (
     process_individual_url,
     find_episode_by_name_and_date,
     process_episode,
+    process_url,
 )
 from .tasks.feeds import update_all_rss_feeds, push_feeds_to_github
 from .tasks.clip import clip_media, generate_srt, burn_subtitles
@@ -254,6 +255,14 @@ def cmd_run(
             push_feeds_to_github()
             typer.echo("Feeds updated.")
 
+        elif action_type == "process_url":
+            result = process_url(
+                url=action.get("url", ""),
+                language=action.get("language", "en"),
+            )
+            if result.get("article_path"):
+                typer.echo(f"Article saved: {result['article_path']}")
+
         else:
             typer.echo(f"Unknown action: {action_type}")
 
@@ -352,6 +361,14 @@ def _execute_nl(command):
             update_all_rss_feeds()
             push_feeds_to_github()
             typer.echo("Feeds updated.")
+
+        elif action_type == "process_url":
+            result = process_url(
+                url=action.get("url", ""),
+                language=action.get("language", "en"),
+            )
+            if result.get("article_path"):
+                typer.echo(f"Artikel opgeslagen: {result['article_path']}")
 
         else:
             typer.echo(f"Onbekende actie: {action_type}")

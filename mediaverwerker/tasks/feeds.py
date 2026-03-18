@@ -206,6 +206,12 @@ def update_all_rss_feeds():
     except Exception as e:
         logger.error(f"Error generating feed for {INDIVIDUAL_FEED_NAME}: {e}")
 
+    # Always generate the catch-all feed for individual/adhoc episodes
+    try:
+        generate_rss_feed("Adhoc")
+    except Exception as e:
+        logger.error(f"Error generating Adhoc feed: {e}")
+
 
 def setup_feeds_repo_for_cloud():
     """Clone the feeds repo in cloud environment."""

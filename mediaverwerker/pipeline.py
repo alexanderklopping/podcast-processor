@@ -544,6 +544,52 @@ def process_adhoc_episode(podcast_query, date=None, topic=None, output_format="t
     return result
 
 
+
+def process_url(url, language="en"):
+    """Download a video/audio from URL, transcribe, and create article.
+
+    Supports YouTube, Twitter/X, and any yt-dlp compatible URL.
+    """
+    from .tasks.download import download_video
+    from .tasks.article import create_article, save_article
+    from .tasks.transcribe import transcribe_audio, save_transcript
+    from .tasks.feeds import generate_rss_feed
+
+    logger.info(f"Processing URL: {url}")
+
+    # Download via yt-dlp
+    media_path = download_video(url)
+
+    # Build pseudo-episode for downstream functions
+    title = media_path.stem
+    episode = {
+        "guid": url,
+        "title": title,
+        "published": datetime.now().strftime("%a, %d %b %Y %H:%M:%S +0000"),
+        "audio_url": url,
+        "description": "",
+        "podcast_name": "Adhoc",
+        "language": language,
+    }
+
+    # Transcribe
+    transcript = transcribe_audio(media_path, language)
+    save_transcript(episode, transcript)
+
+    # Create article
+    article = create_article(episode, transcript)
+    article_path = save_article(episode, article)
+
+    # Update Adhoc feed XML (workflow handles git push)
+    generate_rss_feed("Adhoc")
+
+    logger.info(f"URL processing complete: {article_path}")
+    return {
+        "episode": episode,
+        "media_path": str(media_path),
+        "article_path": str(article_path),
+    }
+
 def batch_process(episodes, max_workers=3):
     """Process multiple episodes in parallel."""
     results = []
