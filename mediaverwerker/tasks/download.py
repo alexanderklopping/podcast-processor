@@ -171,7 +171,10 @@ def fetch_url_metadata(url):
         "--no-warnings",
         url,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error(f"yt-dlp metadata fetch failed (exit {result.returncode}): {result.stderr.strip()}")
+        result.check_returncode()
     metadata = json.loads(result.stdout)
 
     source_url = (
