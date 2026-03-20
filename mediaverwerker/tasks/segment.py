@@ -42,10 +42,7 @@ Return ONLY valid JSON in this exact format:
 
 If the topic is not found, return:
 {"start_index": null, "end_index": null}""",
-        messages=[{
-            "role": "user",
-            "content": f"Topic: {topic}\n\nTranscript:\n{transcript_text}"
-        }]
+        messages=[{"role": "user", "content": f"Topic: {topic}\n\nTranscript:\n{transcript_text}"}],
     )
 
     try:
@@ -62,7 +59,7 @@ If the topic is not found, return:
         return None
 
     # Extract the segment
-    matched_segments = transcript_segments[start_idx:end_idx + 1]
+    matched_segments = transcript_segments[start_idx : end_idx + 1]
     if not matched_segments:
         return None
 

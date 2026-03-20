@@ -106,7 +106,7 @@ def parse_command(user_input):
     if response_text.startswith("```"):
         lines = response_text.split("\n")
         # Remove first line (```json) and last line (```)
-        lines = [l for l in lines if not l.strip().startswith("```")]
+        lines = [line for line in lines if not line.strip().startswith("```")]
         response_text = "\n".join(lines).strip()
 
     try:
@@ -116,16 +116,39 @@ def parse_command(user_input):
         return {"actions": [], "description": "Could not parse command", "error": True}
 
     # Validate structure
-    ALLOWED_ACTIONS = {"process_all", "process_episode", "process_url", "adhoc_episode", "find_segment", "clip", "feeds_update"}
+    ALLOWED_ACTIONS = {
+        "process_all",
+        "process_episode",
+        "process_url",
+        "adhoc_episode",
+        "find_segment",
+        "clip",
+        "feeds_update",
+    }
     if not isinstance(result.get("actions"), list):
         return {"actions": [], "description": "Invalid response structure", "error": True}
+
+    # Required fields per action type
+    REQUIRED_FIELDS = {
+        "process_url": ["url"],
+        "adhoc_episode": ["podcast_query"],
+        "find_segment": ["podcast", "topic"],
+        "process_episode": ["podcast"],
+        "clip": ["file"],
+    }
 
     validated_actions = []
     for action in result["actions"]:
         if not isinstance(action, dict):
             continue
-        if action.get("type") not in ALLOWED_ACTIONS:
-            logger.warning(f"Skipping unknown action type: {action.get('type')}")
+        action_type = action.get("type")
+        if action_type not in ALLOWED_ACTIONS:
+            logger.warning(f"Skipping unknown action type: {action_type}")
+            continue
+        # Check required fields
+        missing = [f for f in REQUIRED_FIELDS.get(action_type, []) if not action.get(f)]
+        if missing:
+            logger.warning(f"Action {action_type} missing required fields: {missing}")
             continue
         validated_actions.append(action)
 

@@ -22,5 +22,23 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["mediaverwerker*"]
 
+[project.optional-dependencies]
+dev = ["ruff>=0.4.0", "pytest>=8.0.0"]
+
 [project.scripts]
 mediaverwerker = "mediaverwerker.cli:app"
+
+[tool.ruff]
+line-length = 120
+exclude = ["podcast_processor.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"mediaverwerker/nlp.py" = ["E501"]
+"mediaverwerker/tasks/article.py" = ["E501"]
+"mediaverwerker/tasks/segment.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

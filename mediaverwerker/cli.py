@@ -1,29 +1,26 @@
 """Mediaverwerker CLI - media processing tool."""
 
 import logging
-import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
 
 from .config import init, validate_environment
-from .util import setup_logging
-from .util import is_url
 from .nlp import parse_command
 from .pipeline import (
-    run_full_pipeline,
-    process_and_extract,
-    process_adhoc_episode,
-    process_individual_url,
     find_episode_by_name_and_date,
+    process_adhoc_episode,
+    process_and_extract,
     process_episode,
-    process_url,
+    process_individual_url,
+    run_full_pipeline,
 )
-from .tasks.feeds import update_all_rss_feeds, push_feeds_to_github
-from .tasks.clip import clip_media, generate_srt, burn_subtitles
-from .tasks.transcribe import transcribe_audio
+from .tasks.clip import burn_subtitles, clip_media, generate_srt
+from .tasks.feeds import push_feeds_to_github, update_all_rss_feeds
 from .tasks.segment import find_segment
+from .tasks.transcribe import transcribe_audio
+from .util import is_url, setup_logging
 
 app = typer.Typer(
     name="mediaverwerker",
@@ -37,6 +34,83 @@ def _init():
     """Initialize environment."""
     setup_logging()
     init()
+
+
+def _dispatch_actions(parsed):
+    """Execute parsed NLP actions. Shared by cmd_run and interactive REPL."""
+    for action in parsed.get("actions", []):
+        action_type = action.get("type")
+
+        if action_type == "process_all":
+            run_full_pipeline()
+
+        elif action_type == "process_episode":
+            episode = find_episode_by_name_and_date(action.get("podcast", ""), action.get("date"))
+            if episode:
+                process_episode(episode)
+            else:
+                typer.echo(f"Episode niet gevonden: {action}")
+
+        elif action_type == "process_url":
+            result = process_individual_url(
+                url=action.get("url", ""),
+                topic=action.get("topic"),
+                output_format=action.get("output", "article"),
+                output_dir=action.get("output_dir"),
+            )
+            if result.get("error"):
+                typer.echo(f"Error: {result['error']}")
+            elif result.get("already_processed"):
+                typer.echo(f"Al aanwezig in feed: {result.get('episode', {}).get('title', '?')}")
+            else:
+                typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
+            if result.get("feed_url"):
+                typer.echo(f"Feed: {result['feed_url']}")
+
+        elif action_type == "find_segment":
+            result = process_and_extract(
+                podcast_name=action.get("podcast", ""),
+                date=action.get("date"),
+                topic=action.get("topic"),
+                output_format=action.get("output", "transcript"),
+            )
+            if result.get("segment_text"):
+                typer.echo(f"\n--- Segment over '{action.get('topic')}' ---")
+                typer.echo(result["segment_text"])
+                typer.echo("---")
+            elif result.get("transcript"):
+                typer.echo(f"Transcript ({len(result['transcript'])} chars)")
+            elif result.get("error"):
+                typer.echo(f"Error: {result['error']}")
+
+        elif action_type == "adhoc_episode":
+            result = process_adhoc_episode(
+                podcast_query=action.get("podcast_query", ""),
+                date=action.get("date"),
+                topic=action.get("topic"),
+                output_format=action.get("output", "transcript"),
+                output_dir=action.get("output_dir"),
+            )
+            if result.get("error"):
+                typer.echo(f"Error: {result['error']}")
+            elif result.get("segment_text"):
+                typer.echo(f"\n--- Segment over '{action.get('topic')}' ---")
+                typer.echo(result["segment_text"])
+                typer.echo("---")
+            elif result.get("output_files"):
+                typer.echo(f"Bestanden opgeslagen in {result['output_dir']}:")
+                for f in result["output_files"]:
+                    typer.echo(f"  {f}")
+            else:
+                typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
+
+        elif action_type == "feeds_update":
+            update_all_rss_feeds()
+            push_feeds_to_github()
+            typer.echo("Feeds updated.")
+
+        else:
+            typer.echo(f"Onbekende actie: {action_type}")
 
 
 @app.command("process")
@@ -187,191 +261,7 @@ def cmd_run(
         raise typer.Exit(1)
 
     typer.echo(f"Plan: {parsed.get('description', '')}")
-
-    for action in parsed.get("actions", []):
-        action_type = action.get("type")
-
-        if action_type == "process_all":
-            run_full_pipeline()
-
-        elif action_type == "process_episode":
-            episode = find_episode_by_name_and_date(action.get("podcast", ""), action.get("date"))
-            if episode:
-                process_episode(episode)
-            else:
-                typer.echo(f"Episode not found: {action}")
-
-        elif action_type == "process_url":
-            result = process_individual_url(
-                url=action.get("url", ""),
-                topic=action.get("topic"),
-                output_format=action.get("output", "article"),
-                output_dir=action.get("output_dir"),
-            )
-            if result.get("error"):
-                typer.echo(f"Error: {result['error']}")
-            elif result.get("already_processed"):
-                typer.echo(f"Al aanwezig in feed: {result.get('episode', {}).get('title', '?')}")
-            else:
-                typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
-            if result.get("feed_url"):
-                typer.echo(f"Feed: {result['feed_url']}")
-
-        elif action_type == "find_segment":
-            result = process_and_extract(
-                podcast_name=action.get("podcast", ""),
-                date=action.get("date"),
-                topic=action.get("topic"),
-                output_format=action.get("output", "transcript"),
-            )
-            if result.get("segment_text"):
-                typer.echo(f"\n--- Segment over '{action.get('topic')}' ---")
-                typer.echo(result["segment_text"])
-                typer.echo("---")
-            elif result.get("transcript"):
-                typer.echo(f"Full transcript ({len(result['transcript'])} chars)")
-            elif result.get("error"):
-                typer.echo(f"Error: {result['error']}")
-
-        elif action_type == "adhoc_episode":
-            result = process_adhoc_episode(
-                podcast_query=action.get("podcast_query", ""),
-                date=action.get("date"),
-                topic=action.get("topic"),
-                output_format=action.get("output", "transcript"),
-                output_dir=action.get("output_dir"),
-            )
-            if result.get("error"):
-                typer.echo(f"Error: {result['error']}")
-            elif result.get("output_files"):
-                typer.echo(f"Bestanden opgeslagen in {result['output_dir']}:")
-                for f in result["output_files"]:
-                    typer.echo(f"  {f}")
-            else:
-                typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
-
-        elif action_type == "feeds_update":
-            update_all_rss_feeds()
-            push_feeds_to_github()
-            typer.echo("Feeds updated.")
-
-        elif action_type == "process_url":
-            result = process_url(
-                url=action.get("url", ""),
-                language=action.get("language", "en"),
-            )
-            if result.get("article_path"):
-                typer.echo(f"Article saved: {result['article_path']}")
-
-        else:
-            typer.echo(f"Unknown action: {action_type}")
-
-
-def _execute_nl(command):
-    """Parse and execute a natural language command."""
-    if not validate_environment():
-        return
-
-    if is_url(command):
-        result = process_individual_url(command)
-        if result.get("error"):
-            typer.echo(f"Error: {result['error']}")
-        else:
-            typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
-            if result.get("feed_url"):
-                typer.echo(f"Feed: {result['feed_url']}")
-        return
-
-    typer.echo(f"\nParsing...")
-    parsed = parse_command(command)
-
-    if parsed.get("error"):
-        typer.echo(f"Niet begrepen: {command}")
-        return
-
-    typer.echo(f"Plan: {parsed.get('description', '')}\n")
-
-    for action in parsed.get("actions", []):
-        action_type = action.get("type")
-
-        if action_type == "process_all":
-            run_full_pipeline()
-
-        elif action_type == "process_episode":
-            episode = find_episode_by_name_and_date(action.get("podcast", ""), action.get("date"))
-            if episode:
-                process_episode(episode)
-            else:
-                typer.echo(f"Episode niet gevonden: {action}")
-
-        elif action_type == "process_url":
-            result = process_individual_url(
-                url=action.get("url", ""),
-                topic=action.get("topic"),
-                output_format=action.get("output", "article"),
-                output_dir=action.get("output_dir"),
-            )
-            if result.get("error"):
-                typer.echo(f"Error: {result['error']}")
-            elif result.get("already_processed"):
-                typer.echo(f"Al aanwezig in feed: {result.get('episode', {}).get('title', '?')}")
-            else:
-                typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
-            if result.get("feed_url"):
-                typer.echo(f"Feed: {result['feed_url']}")
-
-        elif action_type == "find_segment":
-            result = process_and_extract(
-                podcast_name=action.get("podcast", ""),
-                date=action.get("date"),
-                topic=action.get("topic"),
-                output_format=action.get("output", "transcript"),
-            )
-            if result.get("segment_text"):
-                typer.echo(f"\n--- Segment over '{action.get('topic')}' ---")
-                typer.echo(result["segment_text"])
-                typer.echo("---")
-            elif result.get("transcript"):
-                typer.echo(f"Transcript ({len(result['transcript'])} chars)")
-            elif result.get("error"):
-                typer.echo(f"Error: {result['error']}")
-
-        elif action_type == "adhoc_episode":
-            result = process_adhoc_episode(
-                podcast_query=action.get("podcast_query", ""),
-                date=action.get("date"),
-                topic=action.get("topic"),
-                output_format=action.get("output", "transcript"),
-                output_dir=action.get("output_dir"),
-            )
-            if result.get("error"):
-                typer.echo(f"Error: {result['error']}")
-            elif result.get("segment_text"):
-                typer.echo(f"\n--- Segment over '{action.get('topic')}' ---")
-                typer.echo(result["segment_text"])
-                typer.echo("---")
-            elif result.get("output_files"):
-                typer.echo(f"Bestanden opgeslagen in {result['output_dir']}:")
-                for f in result["output_files"]:
-                    typer.echo(f"  {f}")
-            else:
-                typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
-
-        elif action_type == "feeds_update":
-            update_all_rss_feeds()
-            push_feeds_to_github()
-            typer.echo("Feeds updated.")
-
-        elif action_type == "process_url":
-            result = process_url(
-                url=action.get("url", ""),
-                language=action.get("language", "en"),
-            )
-            if result.get("article_path"):
-                typer.echo(f"Artikel opgeslagen: {result['article_path']}")
-
-        else:
-            typer.echo(f"Onbekende actie: {action_type}")
+    _dispatch_actions(parsed)
 
 
 @app.callback(invoke_without_command=True)
@@ -408,7 +298,27 @@ def main(ctx: typer.Context):
             typer.echo('  "stop" om te stoppen')
             continue
 
-        _execute_nl(command)
+        # Parse and execute
+        if not validate_environment():
+            continue
+
+        if is_url(command):
+            result = process_individual_url(command)
+            if result.get("error"):
+                typer.echo(f"Error: {result['error']}")
+            else:
+                typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
+                if result.get("feed_url"):
+                    typer.echo(f"Feed: {result['feed_url']}")
+        else:
+            typer.echo("\nParsing...")
+            parsed = parse_command(command)
+            if parsed.get("error"):
+                typer.echo(f"Niet begrepen: {command}")
+            else:
+                typer.echo(f"Plan: {parsed.get('description', '')}\n")
+                _dispatch_actions(parsed)
+
         typer.echo("")
 
 

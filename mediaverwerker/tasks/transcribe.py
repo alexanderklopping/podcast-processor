@@ -5,8 +5,8 @@ import time
 
 from openai import OpenAI
 
-from ..config import OPENAI_API_KEY, MAX_WHISPER_SIZE, TRANSCRIPTS_DIR
-from ..util import retry_with_backoff, split_audio, sanitize_filename
+from ..config import MAX_WHISPER_SIZE, OPENAI_API_KEY, TRANSCRIPTS_DIR
+from ..util import retry_with_backoff, sanitize_filename, split_audio
 
 logger = logging.getLogger("mediaverwerker")
 
@@ -45,7 +45,7 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
     client = OpenAI(api_key=OPENAI_API_KEY)
 
     if file_size > MAX_WHISPER_SIZE:
-        logger.info(f"File size ({file_size / (1024*1024):.1f}MB) exceeds 25MB limit, splitting...")
+        logger.info(f"File size ({file_size / (1024 * 1024):.1f}MB) exceeds 25MB limit, splitting...")
 
         chunk_paths = split_audio(audio_path)
         if not chunk_paths:
@@ -62,11 +62,13 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
                     result = transcribe_single_file(client, chunk_path, language, timestamps=True)
                     all_text.append(result.text)
                     for seg in result.segments:
-                        all_segments.append({
-                            "start": seg["start"] + time_offset,
-                            "end": seg["end"] + time_offset,
-                            "text": seg["text"],
-                        })
+                        all_segments.append(
+                            {
+                                "start": seg["start"] + time_offset,
+                                "end": seg["end"] + time_offset,
+                                "text": seg["text"],
+                            }
+                        )
                     # Estimate chunk duration from last segment
                     if result.segments:
                         time_offset += result.segments[-1]["end"]
@@ -101,10 +103,7 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
     else:
         if timestamps:
             result = transcribe_single_file(client, audio_path, language, timestamps=True)
-            segments = [
-                {"start": seg["start"], "end": seg["end"], "text": seg["text"]}
-                for seg in result.segments
-            ]
+            segments = [{"start": seg["start"], "end": seg["end"], "text": seg["text"]} for seg in result.segments]
             return {"text": result.text, "segments": segments}
         else:
             return transcribe_single_file(client, audio_path, language)

@@ -15,6 +15,7 @@ logs/
 .DS_Store
 __pycache__/
 *.pyc
+*.egg-info/
 
 # Local state (processed_episodes stored in feeds repo for cloud)
 processed_episodes.json

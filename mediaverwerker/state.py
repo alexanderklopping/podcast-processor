@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime
 
-from .config import PROCESSED_FILE, FAILED_FILE, PODCASTS_FILE, BASE_DIR
+from .config import BASE_DIR, FAILED_FILE, PODCASTS_FILE, PROCESSED_FILE
 
 logger = logging.getLogger("mediaverwerker")
 
@@ -17,7 +17,7 @@ def load_processed_episodes():
                 return json.load(f)
         except json.JSONDecodeError as e:
             logger.error(f"Error reading processed episodes file: {e}")
-            backup_path = PROCESSED_FILE.with_suffix('.json.bak')
+            backup_path = PROCESSED_FILE.with_suffix(".json.bak")
             PROCESSED_FILE.rename(backup_path)
             logger.info(f"Backed up corrupted file to {backup_path}")
     return []
@@ -25,7 +25,7 @@ def load_processed_episodes():
 
 def save_processed_episodes(processed):
     """Save list of processed episode GUIDs with atomic write."""
-    temp_file = PROCESSED_FILE.with_suffix('.json.tmp')
+    temp_file = PROCESSED_FILE.with_suffix(".json.tmp")
     try:
         with open(temp_file, "w") as f:
             json.dump(processed, f, indent=2)
@@ -94,7 +94,7 @@ def write_status_file(success_count, total_count, errors):
         "success_count": success_count,
         "total_count": total_count,
         "errors": errors,
-        "status": "ok" if success_count == total_count else "partial" if success_count > 0 else "failed"
+        "status": "ok" if success_count == total_count else "partial" if success_count > 0 else "failed",
     }
 
     status_file = BASE_DIR / "status.json"

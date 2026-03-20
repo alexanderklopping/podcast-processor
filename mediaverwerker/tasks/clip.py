@@ -1,12 +1,11 @@
 """Video/audio clipping and subtitle generation via ffmpeg."""
 
 import logging
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
-from ..util import format_timestamp, format_srt_timestamp
+from ..util import format_srt_timestamp, format_timestamp
 
 logger = logging.getLogger("mediaverwerker")
 
@@ -29,10 +28,15 @@ def clip_media(input_path, output_path, start, end):
 
     # Detect if input is video or audio
     probe_cmd = [
-        "ffprobe", "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=codec_type",
-        "-of", "csv=p=0",
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "csv=p=0",
         str(input_path),
     ]
     probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
@@ -40,22 +44,40 @@ def clip_media(input_path, output_path, start, end):
 
     if has_video:
         cmd = [
-            "ffmpeg", "-y",
-            "-ss", str(start),
-            "-i", str(input_path),
-            "-t", str(duration),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-            "-c:a", "aac", "-b:a", "192k",
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(start),
+            "-i",
+            str(input_path),
+            "-t",
+            str(duration),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "18",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
             str(output_path),
         ]
     else:
         cmd = [
-            "ffmpeg", "-y",
-            "-ss", str(start),
-            "-i", str(input_path),
-            "-t", str(duration),
-            "-acodec", "libmp3lame",
-            "-ab", "192k",
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(start),
+            "-i",
+            str(input_path),
+            "-t",
+            str(duration),
+            "-acodec",
+            "libmp3lame",
+            "-ab",
+            "192k",
             str(output_path),
         ]
 
@@ -118,11 +140,20 @@ def burn_subtitles(input_path, srt_path, output_path):
         )
 
         cmd = [
-            "ffmpeg", "-y",
-            "-i", str(input_path),
-            "-vf", subtitle_filter,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-            "-c:a", "copy",
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(input_path),
+            "-vf",
+            subtitle_filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "18",
+            "-c:a",
+            "copy",
             str(output_path),
         ]
         subprocess.run(cmd, capture_output=True, check=True)
