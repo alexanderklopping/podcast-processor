@@ -52,8 +52,8 @@ def init():
 
 def validate_environment():
     """Validate that all required environment variables and tools are set."""
-    import subprocess
     import logging
+    import subprocess
 
     logger = logging.getLogger(__name__)
     missing = []

@@ -8,28 +8,32 @@ from pathlib import Path
 
 import feedparser
 
-from .config import init, validate_environment, IS_CLOUD
+from .config import INDIVIDUAL_FEED_SLUG, IS_CLOUD, init, validate_environment
 from .state import (
-    load_processed_episodes, save_processed_episodes,
-    load_failed_episodes, save_failed_episode, remove_failed_episode,
-    load_podcasts, write_status_file,
+    load_failed_episodes,
+    load_podcasts,
+    load_processed_episodes,
+    remove_failed_episode,
+    save_failed_episode,
+    save_processed_episodes,
+    write_status_file,
 )
+from .tasks.article import create_article, save_article
 from .tasks.download import (
     download_episode,
-    search_podcast,
-    fetch_url_metadata,
     download_url_audio,
+    fetch_url_metadata,
+    search_podcast,
 )
-from .tasks.transcribe import transcribe_audio, save_transcript
-from .tasks.article import create_article, save_article
-from .tasks.segment import find_segment
-from .tasks.clip import clip_media, generate_srt
 from .tasks.feeds import (
-    update_all_rss_feeds,
-    update_individual_rss_feed,
+    FEEDS_BASE_URL,
     push_feeds_to_github,
     setup_feeds_repo_for_cloud,
+    update_all_rss_feeds,
+    update_individual_rss_feed,
 )
+from .tasks.segment import find_segment
+from .tasks.transcribe import save_transcript, transcribe_audio
 from .util import retry_with_backoff, sanitize_filename
 
 logger = logging.getLogger("mediaverwerker")
@@ -83,15 +87,17 @@ def get_new_episodes_for_podcast(podcast):
                     break
 
             if audio_url:
-                new_episodes.append({
-                    "guid": guid,
-                    "title": entry.title,
-                    "published": entry.get("published", ""),
-                    "audio_url": audio_url,
-                    "description": entry.get("summary", ""),
-                    "podcast_name": podcast["name"],
-                    "language": podcast.get("language", "en"),
-                })
+                new_episodes.append(
+                    {
+                        "guid": guid,
+                        "title": entry.title,
+                        "published": entry.get("published", ""),
+                        "audio_url": audio_url,
+                        "description": entry.get("summary", ""),
+                        "podcast_name": podcast["name"],
+                        "language": podcast.get("language", "en"),
+                    }
+                )
 
     logger.info(f"Found {len(new_episodes)} new episode(s) for {podcast['name']}")
     return new_episodes
@@ -131,8 +137,8 @@ def find_episode_by_name_and_date(podcast_name, date_str=None):
 
     # Parse target date
     from datetime import timedelta
+
     from dateutil import parser as dateparser
-    import time
 
     target_date = None
     if date_str:
@@ -294,7 +300,10 @@ def process_individual_url(url, topic=None, output_format="article", output_dir=
     """Download and process a single media URL into the individual episodes feed."""
     import shutil
 
+    from .util import validate_url
+
     try:
+        validate_url(url)
         episode = fetch_url_metadata(url)
         logger.info(f"Processing [individual URL]: {episode['title']}")
 
@@ -305,7 +314,7 @@ def process_individual_url(url, topic=None, output_format="article", output_dir=
                 "already_processed": True,
             }
             if publish_to_feed:
-                result["feed_url"] = "https://alexanderklopping.github.io/podcast-feeds/individuele-afleveringen.xml"
+                result["feed_url"] = f"{FEEDS_BASE_URL}/{INDIVIDUAL_FEED_SLUG}.xml"
             return result
 
         audio_path = download_url_audio(url)
@@ -366,7 +375,7 @@ def process_individual_url(url, topic=None, output_format="article", output_dir=
                 return {"error": "Failed to setup feeds repository", "episode": episode}
             update_individual_rss_feed()
             push_feeds_to_github()
-            result["feed_url"] = "https://alexanderklopping.github.io/podcast-feeds/individuele-afleveringen.xml"
+            result["feed_url"] = f"{FEEDS_BASE_URL}/{INDIVIDUAL_FEED_SLUG}.xml"
 
         return result
 
@@ -393,7 +402,6 @@ def process_adhoc_episode(podcast_query, date=None, topic=None, output_format="t
     Returns:
         dict with results.
     """
-    from .config import AUDIO_DIR, TRANSCRIPTS_DIR
     import shutil
 
     # First check if it's a configured podcast
@@ -424,6 +432,7 @@ def process_adhoc_episode(podcast_query, date=None, topic=None, output_format="t
     feed = fetch_rss_feed(podcast["url"])
 
     from datetime import timedelta
+
     from dateutil import parser as dateparser
 
     target_date = None
@@ -544,16 +553,18 @@ def process_adhoc_episode(podcast_query, date=None, topic=None, output_format="t
     return result
 
 
-
 def process_url(url, language="en"):
     """Download a video/audio from URL, transcribe, and create article.
 
     Supports YouTube, Twitter/X, and any yt-dlp compatible URL.
     """
-    from .tasks.download import download_video
+    from .util import validate_url
+
+    validate_url(url)
     from .tasks.article import create_article, save_article
-    from .tasks.transcribe import transcribe_audio, save_transcript
+    from .tasks.download import download_video
     from .tasks.feeds import generate_rss_feed
+    from .tasks.transcribe import save_transcript, transcribe_audio
 
     logger.info(f"Processing URL: {url}")
 
@@ -590,6 +601,7 @@ def process_url(url, language="en"):
         "article_path": str(article_path),
     }
 
+
 def batch_process(episodes, max_workers=3):
     """Process multiple episodes in parallel."""
     results = []
@@ -614,10 +626,7 @@ def retry_failed_episodes():
     if not failed:
         return
 
-    retryable = {
-        guid: info for guid, info in failed.items()
-        if info.get("retry_count", 0) < 5
-    }
+    retryable = {guid: info for guid, info in failed.items() if info.get("retry_count", 0) < 5}
 
     if not retryable:
         logger.info("No failed episodes to retry")

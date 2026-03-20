@@ -83,7 +83,7 @@ def download_episode(episode):
     """Download podcast audio file with retry logic."""
     filename = sanitize_filename(episode["title"]) + ".mp3"
     filepath = AUDIO_DIR / filename
-    temp_filepath = filepath.with_suffix('.mp3.tmp')
+    temp_filepath = filepath.with_suffix(".mp3.tmp")
 
     if filepath.exists():
         if filepath.stat().st_size > 1000:
@@ -96,14 +96,11 @@ def download_episode(episode):
     logger.info(f"Downloading: {episode['title']}")
 
     response = requests.get(
-        episode["audio_url"],
-        stream=True,
-        timeout=300,
-        headers={"User-Agent": "Mediaverwerker/1.0"}
+        episode["audio_url"], stream=True, timeout=300, headers={"User-Agent": "Mediaverwerker/1.0"}
     )
     response.raise_for_status()
 
-    expected_size = int(response.headers.get('content-length', 0))
+    expected_size = int(response.headers.get("content-length", 0))
 
     downloaded_size = 0
     with open(temp_filepath, "wb") as f:
@@ -116,7 +113,7 @@ def download_episode(episode):
         raise Exception(f"Incomplete download: {downloaded_size}/{expected_size} bytes")
 
     temp_filepath.replace(filepath)
-    logger.info(f"Downloaded: {filename} ({downloaded_size / (1024*1024):.1f}MB)")
+    logger.info(f"Downloaded: {filename} ({downloaded_size / (1024 * 1024):.1f}MB)")
     return filepath
 
 
@@ -131,8 +128,10 @@ def download_video(url, output_dir=None):
 
     # First get the filename
     cmd = _yt_dlp_cmd() + [
-        "--print", "filename",
-        "-o", "%(title)s.%(ext)s",
+        "--print",
+        "filename",
+        "-o",
+        "%(title)s.%(ext)s",
         url,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -140,7 +139,8 @@ def download_video(url, output_dir=None):
 
     # Download
     cmd = _yt_dlp_cmd() + [
-        "-o", str(output_dir / "%(title)s.%(ext)s"),
+        "-o",
+        str(output_dir / "%(title)s.%(ext)s"),
         url,
     ]
     subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -156,7 +156,7 @@ def download_video(url, output_dir=None):
         logger.info(f"Video downloaded: {files[0].name}")
         return files[0]
 
-    raise Exception(f"Download completed but output file not found")
+    raise Exception("Download completed but output file not found")
 
 
 def fetch_url_metadata(url):
@@ -174,12 +174,7 @@ def fetch_url_metadata(url):
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     metadata = json.loads(result.stdout)
 
-    source_url = (
-        metadata.get("webpage_url")
-        or metadata.get("original_url")
-        or metadata.get("url")
-        or url
-    )
+    source_url = metadata.get("webpage_url") or metadata.get("original_url") or metadata.get("url") or url
     extractor = (metadata.get("extractor_key") or metadata.get("extractor") or "url").lower()
     media_id = metadata.get("id")
     guid = f"url:{extractor}:{media_id}" if media_id else f"url:{source_url}"

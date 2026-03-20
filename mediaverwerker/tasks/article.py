@@ -147,9 +147,7 @@ def _call_claude(client, system_prompt, user_prompt, max_tokens=48000, thinking_
             "budget_tokens": thinking_budget,
         },
         system=system_prompt,
-        messages=[
-            {"role": "user", "content": user_prompt}
-        ]
+        messages=[{"role": "user", "content": user_prompt}],
     ) as stream:
         for event in stream:
             if event.type == "content_block_delta" and hasattr(event.delta, "text"):
@@ -159,15 +157,19 @@ def _call_claude(client, system_prompt, user_prompt, max_tokens=48000, thinking_
 
 def _strip_transcript_metadata(text):
     """Remove header metadata (title, source, URL, ---) from transcript text."""
-    import re
     # Match common header patterns: lines starting with #, Bron:, Gepubliceerd:, URL:, ---
     lines = text.split("\n")
     content_start = 0
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if stripped.startswith("#") or stripped.startswith("Bron:") or \
-           stripped.startswith("Gepubliceerd:") or stripped.startswith("URL:") or \
-           stripped == "---" or stripped == "":
+        if (
+            stripped.startswith("#")
+            or stripped.startswith("Bron:")
+            or stripped.startswith("Gepubliceerd:")
+            or stripped.startswith("URL:")
+            or stripped == "---"
+            or stripped == ""
+        ):
             content_start = i + 1
         else:
             break
@@ -189,7 +191,7 @@ def _split_transcript(text, max_words=None):
     if len(paragraphs) < 3:
         paragraphs = text.split("\n")
     if len(paragraphs) < 3:
-        paragraphs = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
+        paragraphs = re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
 
     # Filter out empty chunks
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
@@ -218,7 +220,7 @@ def _split_transcript(text, max_words=None):
         words = section.split()
         if len(words) > max_words * 1.5:
             for i in range(0, len(words), max_words):
-                chunk = " ".join(words[i:i + max_words])
+                chunk = " ".join(words[i : i + max_words])
                 if chunk.strip():
                     final_sections.append(chunk)
         else:
@@ -253,8 +255,16 @@ def create_article(episode, transcript):
     article_words = len(article.split())
     target = max(1500, int(word_count * MIN_ARTICLE_RATIO))
     if article_words < target * 0.9:
-        logger.warning(f"Article {article_words} words, target {target}. Running expansion pass...")
-        article = _expand_article(client, episode, text, article, word_count, target)
+        # Guard: skip expansion if combined text would exceed ~150k tokens (~400k chars)
+        combined_chars = len(text) + len(article)
+        if combined_chars > 400_000:
+            logger.warning(
+                f"Article {article_words} words (target {target}), but skipping expansion: "
+                f"combined text too large ({combined_chars:,} chars)"
+            )
+        else:
+            logger.warning(f"Article {article_words} words, target {target}. Running expansion pass...")
+            article = _expand_article(client, episode, text, article, word_count, target)
 
     return article
 
@@ -265,9 +275,9 @@ def _create_article_single(client, episode, text, word_count):
 
     user_prompt = f"""Hier is een podcast aflevering om te transformeren naar een geschreven hoofdstuk:
 
-**Titel:** {episode['title']}
-**Gepubliceerd:** {episode['published']}
-**Beschrijving:** {episode['description']}
+**Titel:** {episode["title"]}
+**Gepubliceerd:** {episode["published"]}
+**Beschrijving:** {episode["description"]}
 
 **LENGTE-VEREISTE (VERPLICHT):** Dit transcript bevat {word_count} woorden. Je artikel MOET minimaal {target_words} woorden bevatten. Dit is een harde ondergrens, geen richtlijn. Verwerk ALLE inhoudelijke details, anekdotes, voorbeelden, redeneringen en citaten uit het transcript. Vat NIET samen — vertel het volledige verhaal met alle nuances. Sla alleen reclames, sponsorvermeldingen en promoties over.
 
@@ -296,9 +306,9 @@ def _generate_section(client, episode, section, section_index, total_sections, w
 
     section_prompt = f"""Hier is **deel {section_index + 1} van {total_sections}** van een podcast aflevering.
 
-**Titel:** {episode['title']}
-**Gepubliceerd:** {episode['published']}
-**Beschrijving:** {episode['description']}
+**Titel:** {episode["title"]}
+**Gepubliceerd:** {episode["published"]}
+**Beschrijving:** {episode["description"]}
 
 **Context:** Het volledige transcript bevat {word_count} woorden, verdeeld over {total_sections} delen. Het volledige artikel moet minimaal {total_target} woorden zijn.
 
@@ -327,7 +337,9 @@ def _create_article_sections(client, episode, text, word_count):
     sections = _split_transcript(text)
     total_target = max(1500, int(word_count * MIN_ARTICLE_RATIO))
 
-    logger.info(f"Long transcript ({word_count} words) — splitting into {len(sections)} sections, total target: {total_target} words")
+    logger.info(
+        f"Long transcript ({word_count} words) — splitting into {len(sections)} sections, total target: {total_target} words"
+    )
 
     parts = []
     for i, section in enumerate(sections):
