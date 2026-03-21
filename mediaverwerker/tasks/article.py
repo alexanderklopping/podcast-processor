@@ -38,7 +38,7 @@ Schrijf als een Nederlandse native speaker die literaire non-fictie schrijft:
 
 **Length**
 
-CRITICAL: Write at the length specified in the user message. The reader wants the FULL story with ALL details, anecdotes, quotes, and insights preserved. Do NOT summarize or compress. If the transcript contains 10 interesting anecdotes, include all 10. If a speaker makes 8 distinct points, cover all 8 in depth. Longer is better than shorter — the reader chose to read this because they want the complete story, not a summary.
+Write at ~60% of the transcript length. This does NOT mean leaving things out — include every anecdote, every key quote, every insight, every detail that gives the piece its character. But tell it tighter: cut spoken-word repetition, eliminate redundant phrasing, compress transitions, and trust the reader to follow without hand-holding. If the transcript makes the same point three ways, make it once — brilliantly. The goal is a text that feels as rich and complete as the original conversation, just written with the economy of great prose.
 
 **Step 1: Understand the Arc**
 
@@ -133,7 +133,7 @@ If yes to all, you've succeeded."""
 
 SECTION_THRESHOLD = 10000  # Split transcripts longer than this into sections
 SECTION_SIZE = 2500  # Target words per section (smaller = more achievable per-section targets)
-MIN_ARTICLE_RATIO = 0.67  # Article must be at least 67% of transcript word count
+MIN_ARTICLE_RATIO = 0.60  # Article must be at least 60% of transcript word count
 
 
 def _call_claude(client, system_prompt, user_prompt, max_tokens=48000, thinking_budget=10000):
@@ -279,7 +279,7 @@ def _create_article_single(client, episode, text, word_count):
 **Gepubliceerd:** {episode["published"]}
 **Beschrijving:** {episode["description"]}
 
-**LENGTE-VEREISTE (VERPLICHT):** Dit transcript bevat {word_count} woorden. Je artikel MOET minimaal {target_words} woorden bevatten. Dit is een harde ondergrens, geen richtlijn. Verwerk ALLE inhoudelijke details, anekdotes, voorbeelden, redeneringen en citaten uit het transcript. Vat NIET samen — vertel het volledige verhaal met alle nuances. Sla alleen reclames, sponsorvermeldingen en promoties over.
+**LENGTE-VEREISTE:** Dit transcript bevat {word_count} woorden. Schrijf een artikel van circa {target_words} woorden. Laat NIETS weg — alle anekdotes, details, citaten en inzichten moeten erin. Maar vertel het compacter: schrap herhalingen uit het gesprek, strak de zinnen aan, en vertrouw op de lezer. Sla alleen reclames, sponsorvermeldingen en promoties over.
 
 ---
 
@@ -300,7 +300,7 @@ Transformeer dit transcript naar een compelling geschreven hoofdstuk volgens de 
 def _generate_section(client, episode, section, section_index, total_sections, word_count, total_target):
     """Generate a single section."""
     section_words = len(section.split())
-    section_target = max(1200, int(section_words * 0.75))
+    section_target = max(1200, int(section_words * 0.60))
     is_first = section_index == 0
     is_last = section_index == total_sections - 1
 
@@ -312,7 +312,7 @@ def _generate_section(client, episode, section, section_index, total_sections, w
 
 **Context:** Het volledige transcript bevat {word_count} woorden, verdeeld over {total_sections} delen. Het volledige artikel moet minimaal {total_target} woorden zijn.
 
-**LENGTE-VEREISTE (VERPLICHT):** Dit deel bevat {section_words} woorden transcript. Je MOET minimaal {section_target} woorden schrijven voor dit deel. Verwerk ALLE details, anekdotes, redeneringen en citaten. Dit is geen samenvatting — het is een uitgebreide hervertelling van alles wat besproken wordt. Sla alleen reclames en sponsorvermeldingen over.
+**LENGTE-VEREISTE:** Dit deel bevat {section_words} woorden transcript. Schrijf circa {section_target} woorden voor dit deel. Laat NIETS weg — alle anekdotes, details, citaten en inzichten moeten erin. Maar vertel het compacter: schrap herhalingen, strak de zinnen aan, en vertrouw op de lezer. Sla alleen reclames en sponsorvermeldingen over.
 {"Begin met een pakkende titel en openingsscène." if is_first else "Ga naadloos verder waar het vorige deel eindigde. Geen nieuwe titel of inleiding."}
 {"Eindig met een krachtige afsluiting die het hele verhaal samenbrengt." if is_last else "Eindig op een natuurlijk punt — het verhaal gaat verder in het volgende deel."}
 
