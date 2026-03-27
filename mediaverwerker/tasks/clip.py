@@ -112,6 +112,8 @@ def generate_srt(segments, offset, srt_path):
         lines.append("")
         counter += 1
 
+    if ".." in str(srt_path):
+        raise Exception("Invalid file path")
     srt_path.write_text("\n".join(lines), encoding="utf-8")
     logger.info(f"Subtitles saved: {srt_path.name} ({counter - 1} lines)")
     return srt_path
