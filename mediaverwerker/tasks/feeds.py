@@ -187,7 +187,11 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
 </rss>"""
 
     feed_path = FEEDS_DIR / feed_filename
-    with open(feed_path, "w", encoding="utf-8") as f:
+    base_real = os.path.realpath(FEEDS_DIR)
+    target_real = os.path.realpath(feed_path)
+    if os.path.commonpath([base_real, target_real]) != base_real:
+        raise Exception("Invalid file path")
+    with open(target_real, "w", encoding="utf-8") as f:
         f.write(feed)
 
     logger.info(f"RSS feed saved: {feed_path} ({len(articles)} articles)")
