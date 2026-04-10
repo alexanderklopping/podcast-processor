@@ -1,29 +1,45 @@
-"""Audio transcription via OpenAI Whisper API."""
+"""Audio transcription via OpenAI Whisper API or Groq."""
 
 import logging
 import time
 
 from openai import OpenAI
 
-from ..config import MAX_WHISPER_SIZE, OPENAI_API_KEY, TRANSCRIPTS_DIR
+from ..config import (
+    GROQ_API_KEY,
+    MAX_WHISPER_SIZE,
+    OPENAI_API_KEY,
+    TRANSCRIPTION_PROVIDER,
+    TRANSCRIPTS_DIR,
+)
 from ..util import retry_with_backoff, sanitize_filename, split_audio
 
 logger = logging.getLogger("mediaverwerker")
 
 
+def _get_transcription_client():
+    """Return (client, model) based on configured provider."""
+    if TRANSCRIPTION_PROVIDER == "groq":
+        logger.info("Using Groq for transcription (whisper-large-v3-turbo)")
+        return (
+            OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY),
+            "whisper-large-v3-turbo",
+        )
+    logger.info("Using OpenAI for transcription (whisper-1)")
+    return OpenAI(api_key=OPENAI_API_KEY), "whisper-1"
+
+
 @retry_with_backoff(max_retries=3, delay=5)
-def transcribe_single_file(client, audio_path, language="en", timestamps=False):
+def transcribe_single_file(client, model, audio_path, language="en", timestamps=False):
     """Transcribe a single audio file with retry logic."""
     with open(audio_path, "rb") as audio_file:
         response_format = "verbose_json" if timestamps else "text"
         result = client.audio.transcriptions.create(
-            model="whisper-1",
+            model=model,
             file=audio_file,
             language=language,
             response_format=response_format,
         )
-        if timestamps:
-            return result
         return result
 
 
@@ -42,7 +58,7 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
     logger.info(f"Transcribing: {audio_path.name} (language: {language})")
 
     file_size = audio_path.stat().st_size
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client, model = _get_transcription_client()
 
     if file_size > MAX_WHISPER_SIZE:
         logger.info(f"File size ({file_size / (1024 * 1024):.1f}MB) exceeds 25MB limit, splitting...")
@@ -59,7 +75,7 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
             logger.info(f"Transcribing chunk {i + 1}/{len(chunk_paths)}...")
             try:
                 if timestamps:
-                    result = transcribe_single_file(client, chunk_path, language, timestamps=True)
+                    result = transcribe_single_file(client, model, chunk_path, language, timestamps=True)
                     all_text.append(result.text)
                     for seg in result.segments:
                         all_segments.append(
@@ -73,7 +89,7 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
                     if result.segments:
                         time_offset += result.segments[-1]["end"]
                 else:
-                    transcript = transcribe_single_file(client, chunk_path, language)
+                    transcript = transcribe_single_file(client, model, chunk_path, language)
                     all_text.append(transcript)
 
                 time.sleep(1)
@@ -102,11 +118,11 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
         return full_text
     else:
         if timestamps:
-            result = transcribe_single_file(client, audio_path, language, timestamps=True)
+            result = transcribe_single_file(client, model, audio_path, language, timestamps=True)
             segments = [{"start": seg["start"], "end": seg["end"], "text": seg["text"]} for seg in result.segments]
             return {"text": result.text, "segments": segments}
         else:
-            return transcribe_single_file(client, audio_path, language)
+            return transcribe_single_file(client, model, audio_path, language)
 
     logger.info("Transcription complete")
 

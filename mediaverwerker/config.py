@@ -20,6 +20,12 @@ YTDLP_COOKIES_FROM_BROWSER = _env_config.get("YTDLP_COOKIES_FROM_BROWSER") or os
 YTDLP_COOKIES_FILE = _env_config.get("YTDLP_COOKIES_FILE") or os.getenv("YTDLP_COOKIES_FILE")
 YTDLP_IMPERSONATE = _env_config.get("YTDLP_IMPERSONATE") or os.getenv("YTDLP_IMPERSONATE")
 YTDLP_REMOTE_COMPONENTS = _env_config.get("YTDLP_REMOTE_COMPONENTS") or os.getenv("YTDLP_REMOTE_COMPONENTS")
+GROQ_API_KEY = _env_config.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+
+# Transcription provider: "groq" (default, cheapest) or "openai"
+TRANSCRIPTION_PROVIDER = (
+    _env_config.get("TRANSCRIPTION_PROVIDER") or os.getenv("TRANSCRIPTION_PROVIDER") or "groq"
+)
 
 # Cloud mode detection
 IS_CLOUD = os.getenv("RENDER") is not None or os.getenv("IS_CLOUD") == "true"
@@ -36,8 +42,8 @@ FAILED_FILE = BASE_DIR / "failed_episodes.json"
 INDIVIDUAL_FEED_NAME = "Individuele Afleveringen"
 INDIVIDUAL_FEED_SLUG = "individuele-afleveringen"
 
-# Whisper API limits
-MAX_WHISPER_SIZE = 25 * 1024 * 1024  # 25MB
+# Whisper API limits (Groq paid tier supports 100MB, OpenAI 25MB)
+MAX_WHISPER_SIZE = 100 * 1024 * 1024 if TRANSCRIPTION_PROVIDER == "groq" else 25 * 1024 * 1024
 
 # Retry defaults
 MAX_RETRIES = 3
@@ -58,7 +64,9 @@ def validate_environment():
     logger = logging.getLogger(__name__)
     missing = []
 
-    if not OPENAI_API_KEY:
+    if TRANSCRIPTION_PROVIDER == "groq" and not GROQ_API_KEY:
+        missing.append("GROQ_API_KEY")
+    if TRANSCRIPTION_PROVIDER == "openai" and not OPENAI_API_KEY:
         missing.append("OPENAI_API_KEY")
     if not ANTHROPIC_API_KEY:
         missing.append("ANTHROPIC_API_KEY")
