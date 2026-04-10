@@ -23,9 +23,7 @@ YTDLP_REMOTE_COMPONENTS = _env_config.get("YTDLP_REMOTE_COMPONENTS") or os.geten
 GROQ_API_KEY = _env_config.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
 
 # Transcription provider: "groq" (default, cheapest) or "openai"
-TRANSCRIPTION_PROVIDER = (
-    _env_config.get("TRANSCRIPTION_PROVIDER") or os.getenv("TRANSCRIPTION_PROVIDER") or "groq"
-)
+TRANSCRIPTION_PROVIDER = _env_config.get("TRANSCRIPTION_PROVIDER") or os.getenv("TRANSCRIPTION_PROVIDER") or "groq"
 
 # Cloud mode detection
 IS_CLOUD = os.getenv("RENDER") is not None or os.getenv("IS_CLOUD") == "true"
