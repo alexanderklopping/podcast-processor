@@ -7,6 +7,7 @@ from typing import Optional
 import typer
 
 from .config import init, validate_environment
+from .daemon import run_daemon
 from .nlp import parse_command
 from .pipeline import (
     find_episode_by_name_and_date,
@@ -158,6 +159,24 @@ def cmd_process(
             typer.echo(f"Transcript ({len(result['transcript'])} chars) saved.")
     else:
         run_full_pipeline()
+
+
+@app.command("daemon")
+def cmd_daemon(
+    interval_seconds: Optional[int] = typer.Option(
+        None,
+        "--interval-seconds",
+        help="Delay between pipeline runs; defaults to PROCESS_INTERVAL_SECONDS or 3600",
+    ),
+    port: Optional[int] = typer.Option(
+        None,
+        "--port",
+        help="Optional healthcheck port; defaults to PORT when present",
+    ),
+):
+    """Run the processor as a long-lived worker for Render-style platforms."""
+    _init()
+    run_daemon(interval_seconds=interval_seconds, port=port)
 
 
 @app.command("clip")

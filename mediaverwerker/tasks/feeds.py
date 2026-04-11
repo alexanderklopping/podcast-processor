@@ -105,6 +105,11 @@ def _fix_feed_encoding(text):
     return cleaned
 
 
+def _escape_feed_text(text):
+    """Escape XML-sensitive characters in already cleaned feed text."""
+    return _fix_feed_encoding(text).replace("<", "&lt;").replace(">", "&gt;")
+
+
 def strip_embedded_metadata(markdown_text):
     """Remove the leading metadata comment block from markdown."""
     return re.sub(r"^<!--\n.*?\n-->\n*", "", markdown_text, count=1, flags=re.DOTALL)
@@ -283,10 +288,10 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
             for article in articles:
                 rfc822_date = article["pub_date"].strftime("%a, %d %b %Y %H:%M:%S +0000")
                 content_fixed = _fix_feed_encoding(article["content"]).replace("]]>", "]]]]><![CDATA[>")
-                description_fixed = _fix_feed_encoding(article["description"]).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                title_fixed = _fix_feed_encoding(article["title"]).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                description_fixed = _escape_feed_text(article["description"])
+                title_fixed = _escape_feed_text(article["title"])
                 link_url = article.get("link_url") or f"{FEEDS_BASE_URL}/{feed_filename}#{article['guid']}"
-                link_fixed = link_url.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                link_fixed = _escape_feed_text(link_url)
 
                 item = f"""    <item>
       <title>{title_fixed}</title>

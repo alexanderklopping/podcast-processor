@@ -10,4 +10,4 @@ COPY podcasts.json .
 
 RUN pip install --no-cache-dir -e .
 
-CMD ["mediaverwerker", "process"]
+CMD ["mediaverwerker", "daemon"]

@@ -653,7 +653,14 @@ def retry_failed_episodes():
 
 
 def run_full_pipeline():
-    """Run the complete processing pipeline (equivalent to old main())."""
+    """Run the complete processing pipeline and exit non-zero on fatal failure."""
+    exit_code = execute_pipeline_once()
+    if exit_code:
+        sys.exit(exit_code)
+
+
+def execute_pipeline_once():
+    """Run the complete processing pipeline once and return an exit code."""
     init()
 
     logger.info("=" * 60)
@@ -663,12 +670,12 @@ def run_full_pipeline():
 
     if not validate_environment():
         write_status_file(0, 0, ["Environment validation failed"])
-        sys.exit(1)
+        return 1
 
     if IS_CLOUD:
         if not setup_feeds_repo_for_cloud():
             write_status_file(0, 0, ["Failed to setup feeds repository"])
-            sys.exit(1)
+            return 1
 
     errors = []
 
@@ -700,8 +707,9 @@ def run_full_pipeline():
         update_all_rss_feeds()
         push_feeds_to_github()
         write_status_file(success_count, len(new_episodes), errors)
+        return 0
 
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         write_status_file(0, 0, [str(e)])
-        sys.exit(1)
+        return 1
