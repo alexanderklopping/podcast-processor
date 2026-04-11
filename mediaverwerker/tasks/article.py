@@ -1,5 +1,6 @@
 """Article generation via Claude API."""
 
+import json
 import logging
 from datetime import datetime
 
@@ -131,6 +132,55 @@ Before you finish, ask yourself:
 If yes to all, you've succeeded."""
 
 
+QUALITY_LOOP_MAX_ITERATIONS = 3  # Max improvement iterations
+QUALITY_LOOP_TARGET_SCORE = 8  # Minimum acceptable average score (1-10)
+
+SCORE_ARTICLE_PROMPT = """Je bent een strenge redacteur voor literaire non-fictie in het Nederlands. Je beoordeelt een artikel dat is gegenereerd op basis van een podcast transcript.
+
+Beoordeel het artikel op deze 5 dimensies (elk een score van 1-10):
+
+1. **volledigheid**: Zijn alle belangrijke anekdotes, inzichten, citaten en details uit het transcript verwerkt? Mis je iets substantieels?
+2. **nederlands**: Leest dit als oorspronkelijk Nederlands geschreven door een native speaker? Geen vertalingen, anglicismen, of stijve constructies?
+3. **narratief**: Heeft het artikel een narratieve boog? Scènes, spanning, keerpunten? Of leest het als een samenvatting?
+4. **citaten**: Zijn de beste citaten uit het transcript bewaard en goed ingebed? Spreken de protagonisten voor zichzelf?
+5. **leesbaarheid**: Vloeit de tekst? Varieert de zinslengte? Is het een hoofdstuk dat je wilt blijven lezen?
+
+Geef voor ELKE dimensie met score < 8 concrete, specifieke feedback over wat er beter moet. Verwijs naar specifieke passages uit het transcript die ontbreken of beter verwerkt moeten worden.
+
+Antwoord ALLEEN in dit JSON-formaat:
+{
+  "scores": {
+    "volledigheid": <1-10>,
+    "nederlands": <1-10>,
+    "narratief": <1-10>,
+    "citaten": <1-10>,
+    "leesbaarheid": <1-10>
+  },
+  "gemiddelde": <float>,
+  "feedback": [
+    {"dimensie": "<naam>", "probleem": "<wat er mis is>", "suggestie": "<concrete verbetering>"},
+    ...
+  ]
+}"""
+
+IMPROVE_ARTICLE_PROMPT = """Je bent een ervaren Nederlandse ghostwriter die literaire non-fictie schrijft. Je hebt eerder een artikel geschreven op basis van een podcast transcript, en een redacteur heeft specifieke feedback gegeven.
+
+**TAAK:** Herschrijf het artikel en verwerk ALLE feedback. Behoud wat al goed is, verbeter wat de redacteur aanwijst. Het resultaat moet een volledig artikel zijn, geen patch of diff.
+
+**Stijl:** Schrijf als een hoofdstuk uit een biografie — denk aan Shoe Dog, The Everything Store. Rijke narratief, scènes, citaten die de protagonisten zelf laten spreken.
+
+**FEEDBACK VAN DE REDACTEUR:**
+{feedback}
+
+**HUIDIG ARTIKEL:**
+{article}
+
+**ORIGINEEL TRANSCRIPT:**
+{transcript}
+
+Herschrijf het volledige artikel in het Nederlands. Verwerk alle feedback."""
+
+
 SECTION_THRESHOLD = 10000  # Split transcripts longer than this into sections
 SECTION_SIZE = 2500  # Target words per section (smaller = more achievable per-section targets)
 MIN_ARTICLE_RATIO = 0.60  # Article must be at least 60% of transcript word count
@@ -237,6 +287,137 @@ def _split_transcript(text, max_words=None):
     return merged
 
 
+def _score_article(client, transcript_text, article):
+    """Score an article against the transcript on 5 quality dimensions.
+
+    Returns dict with 'scores', 'gemiddelde', and 'feedback' list.
+    Returns None if scoring fails.
+    """
+    # Guard: skip scoring if combined text would exceed context limits
+    combined_chars = len(transcript_text) + len(article)
+    if combined_chars > 400_000:
+        logger.warning(f"Skipping quality scoring: combined text too large ({combined_chars:,} chars)")
+        return None
+
+    user_prompt = f"""**ARTIKEL:**
+
+{article}
+
+---
+
+**ORIGINEEL TRANSCRIPT:**
+
+{transcript_text}
+
+---
+
+Beoordeel dit artikel volgens de instructies. Antwoord ALLEEN in JSON."""
+
+    try:
+        response = _call_claude(client, SCORE_ARTICLE_PROMPT, user_prompt, max_tokens=4000, thinking_budget=8000)
+
+        # Strip markdown code blocks if present
+        text = response.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            lines = [line for line in lines if not line.strip().startswith("```")]
+            text = "\n".join(lines).strip()
+
+        result = json.loads(text)
+
+        # Validate structure
+        scores = result.get("scores", {})
+        dimensions = ["volledigheid", "nederlands", "narratief", "citaten", "leesbaarheid"]
+        for dim in dimensions:
+            if dim not in scores or not isinstance(scores[dim], (int, float)):
+                logger.warning(f"Missing or invalid score for dimension: {dim}")
+                return None
+
+        avg = sum(scores[dim] for dim in dimensions) / len(dimensions)
+        result["gemiddelde"] = round(avg, 1)
+
+        logger.info(
+            f"Quality scores: "
+            + " | ".join(f"{dim}={scores[dim]}" for dim in dimensions)
+            + f" | avg={result['gemiddelde']}"
+        )
+        return result
+
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        logger.warning(f"Failed to parse quality score response: {e}")
+        return None
+
+
+def _improve_article(client, transcript_text, article, feedback_items):
+    """Improve an article based on specific editorial feedback."""
+    feedback_text = "\n".join(
+        f"- **{item['dimensie']}**: {item['probleem']} → {item['suggestie']}" for item in feedback_items
+    )
+
+    prompt = IMPROVE_ARTICLE_PROMPT.format(
+        feedback=feedback_text,
+        article=article,
+        transcript=transcript_text,
+    )
+
+    improved = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, prompt)
+    improved_words = len(improved.split())
+    logger.info(f"Improved article: {improved_words} words")
+    return improved
+
+
+def _run_quality_loop(client, transcript_text, article):
+    """Run iterative quality improvement loop on an article.
+
+    Scores the article, identifies weak dimensions, improves, and repeats
+    until quality target is met or max iterations reached.
+    """
+    # Guard: skip loop if combined text is too large for scoring
+    combined_chars = len(transcript_text) + len(article)
+    if combined_chars > 400_000:
+        logger.info(f"Skipping quality loop: combined text too large ({combined_chars:,} chars)")
+        return article
+
+    for iteration in range(QUALITY_LOOP_MAX_ITERATIONS):
+        logger.info(f"Quality loop iteration {iteration + 1}/{QUALITY_LOOP_MAX_ITERATIONS}")
+
+        score_result = _score_article(client, transcript_text, article)
+        if score_result is None:
+            logger.warning("Scoring failed, returning current article")
+            return article
+
+        avg_score = score_result["gemiddelde"]
+        if avg_score >= QUALITY_LOOP_TARGET_SCORE:
+            logger.info(f"Quality target met: {avg_score}/10 (target: {QUALITY_LOOP_TARGET_SCORE})")
+            return article
+
+        feedback_items = score_result.get("feedback", [])
+        if not feedback_items:
+            logger.info(f"Score {avg_score}/10 below target but no feedback provided, stopping")
+            return article
+
+        logger.info(
+            f"Score {avg_score}/10 (target: {QUALITY_LOOP_TARGET_SCORE}), "
+            f"improving {len(feedback_items)} issue(s)..."
+        )
+
+        improved = _improve_article(client, transcript_text, article, feedback_items)
+
+        # Only keep improvement if it's not drastically shorter
+        if len(improved.split()) >= len(article.split()) * 0.8:
+            article = improved
+        else:
+            logger.warning("Improved version too short, keeping previous version")
+            return article
+
+    # Final score after all iterations
+    final_score = _score_article(client, transcript_text, article)
+    if final_score:
+        logger.info(f"Final quality score after {QUALITY_LOOP_MAX_ITERATIONS} iterations: {final_score['gemiddelde']}/10")
+
+    return article
+
+
 @retry_with_backoff(max_retries=3, delay=5)
 def create_article(episode, transcript):
     """Convert transcript to article using Claude."""
@@ -265,6 +446,9 @@ def create_article(episode, transcript):
         else:
             logger.warning(f"Article {article_words} words, target {target}. Running expansion pass...")
             article = _expand_article(client, episode, text, article, word_count, target)
+
+    # Quality improvement loop
+    article = _run_quality_loop(client, text, article)
 
     return article
 

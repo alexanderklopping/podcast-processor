@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 from ..config import (
@@ -21,6 +22,8 @@ from ..state import load_podcasts
 FEEDS_REPO = "alexanderklopping/podcast-feeds"
 FEEDS_BASE_URL = "https://alexanderklopping.github.io/podcast-feeds"
 
+FEED_VALIDATION_MAX_RETRIES = 3
+
 
 def _feeds_repo_url():
     """Build authenticated git URL. Never log this value — it contains the token."""
@@ -28,6 +31,78 @@ def _feeds_repo_url():
 
 
 logger = logging.getLogger("mediaverwerker")
+
+
+def _validate_feed_xml(feed_content):
+    """Validate RSS feed XML and return (is_valid, list_of_issues).
+
+    Checks XML well-formedness, required RSS elements, and encoding issues.
+    """
+    issues = []
+
+    # Check XML well-formedness
+    try:
+        # Register content namespace to avoid parsing errors
+        ET.register_namespace("content", "http://purl.org/rss/1.0/modules/content/")
+        ET.register_namespace("atom", "http://www.w3.org/2005/Atom")
+        root = ET.fromstring(feed_content.encode("utf-8"))
+    except ET.ParseError as e:
+        issues.append(f"XML parse error: {e}")
+        return False, issues
+
+    # Check RSS structure
+    if root.tag != "rss":
+        issues.append(f"Root element is '{root.tag}', expected 'rss'")
+
+    channel = root.find("channel")
+    if channel is None:
+        issues.append("Missing <channel> element")
+        return False, issues
+
+    # Check required channel elements
+    for required in ["title", "link", "description"]:
+        if channel.find(required) is None:
+            issues.append(f"Missing required channel element: <{required}>")
+
+    # Check items
+    items = channel.findall("item")
+    if not items:
+        issues.append("Feed has no <item> elements")
+
+    for i, item in enumerate(items):
+        item_title = item.find("title")
+        if item_title is None or not item_title.text:
+            issues.append(f"Item {i}: missing or empty <title>")
+
+        item_guid = item.find("guid")
+        if item_guid is None or not item_guid.text:
+            issues.append(f"Item {i}: missing or empty <guid>")
+
+    # Check for common encoding issues
+    if "\x00" in feed_content:
+        issues.append("Feed contains null bytes")
+    if "]]>" in feed_content.replace("]]]]><![CDATA[>", ""):
+        # Check for unescaped CDATA end markers (after accounting for proper escaping)
+        pass
+
+    return len(issues) == 0, issues
+
+
+def _fix_feed_encoding(text):
+    """Fix common XML encoding issues in text content."""
+    # Remove control characters except tab, newline, carriage return
+    import unicodedata
+
+    cleaned = ""
+    for char in text:
+        if unicodedata.category(char) == "Cc" and char not in ("\t", "\n", "\r"):
+            continue
+        cleaned += char
+
+    # Fix unescaped ampersands that aren't part of entities
+    cleaned = re.sub(r"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)", "&amp;", cleaned)
+
+    return cleaned
 
 
 def strip_embedded_metadata(markdown_text):
@@ -185,6 +260,58 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
 {chr(10).join(rss_items)}
   </channel>
 </rss>"""
+
+    # Validation loop: validate XML, fix encoding issues, retry
+    for attempt in range(FEED_VALIDATION_MAX_RETRIES):
+        is_valid, validation_issues = _validate_feed_xml(feed)
+
+        if is_valid:
+            if attempt > 0:
+                logger.info(f"Feed validated after {attempt + 1} attempt(s)")
+            break
+
+        logger.warning(f"Feed validation attempt {attempt + 1} found {len(validation_issues)} issue(s):")
+        for issue in validation_issues:
+            logger.warning(f"  - {issue}")
+
+        if attempt < FEED_VALIDATION_MAX_RETRIES - 1:
+            # Try to fix encoding issues and regenerate
+            feed = _fix_feed_encoding(feed)
+
+            # Regenerate items with fixed encoding
+            rss_items_fixed = []
+            for article in articles:
+                rfc822_date = article["pub_date"].strftime("%a, %d %b %Y %H:%M:%S +0000")
+                content_fixed = _fix_feed_encoding(article["content"]).replace("]]>", "]]]]><![CDATA[>")
+                description_fixed = _fix_feed_encoding(article["description"]).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                title_fixed = _fix_feed_encoding(article["title"]).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                link_url = article.get("link_url") or f"{FEEDS_BASE_URL}/{feed_filename}#{article['guid']}"
+                link_fixed = link_url.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+                item = f"""    <item>
+      <title>{title_fixed}</title>
+      <link>{link_fixed}</link>
+      <description>{description_fixed}</description>
+      <pubDate>{rfc822_date}</pubDate>
+      <guid isPermaLink="false">{article["guid"]}</guid>
+      <content:encoded><![CDATA[{content_fixed}]]></content:encoded>
+    </item>"""
+                rss_items_fixed.append(item)
+
+            feed = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>{_fix_feed_encoding(podcast_name)} - Podcast Artikelen</title>
+    <link>{feed_url}</link>
+    <description>{_fix_feed_encoding(feed_description)}</description>
+    <language>nl</language>
+    <lastBuildDate>{now_rfc822}</lastBuildDate>
+    <atom:link href="{feed_url}" rel="self" type="application/rss+xml"/>
+{chr(10).join(rss_items_fixed)}
+  </channel>
+</rss>"""
+        else:
+            logger.error(f"Feed validation failed after {FEED_VALIDATION_MAX_RETRIES} attempts, saving anyway")
 
     feed_path = FEEDS_DIR / feed_filename
     with open(feed_path, "w", encoding="utf-8") as f:
