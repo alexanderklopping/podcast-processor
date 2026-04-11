@@ -3,9 +3,11 @@
 import logging
 import time
 
+from anthropic import Anthropic
 from openai import OpenAI
 
 from ..config import (
+    ANTHROPIC_API_KEY,
     GROQ_API_KEY,
     MAX_WHISPER_SIZE,
     OPENAI_API_KEY,
@@ -15,6 +17,118 @@ from ..config import (
 from ..util import retry_with_backoff, sanitize_filename, split_audio
 
 logger = logging.getLogger("mediaverwerker")
+
+TRANSCRIPT_CLEANUP_MAX_ITERATIONS = 2
+TRANSCRIPT_CLEANUP_MIN_WORDS = 500  # Skip cleanup for very short transcripts
+
+CLEANUP_SYSTEM_PROMPT = """Je bent een transcriptie-editor. Je krijgt een ruwe transcriptie van een podcast aflevering (via Whisper/Groq spraakherkenning). Je taak is de tekst opschonen ZONDER inhoud te veranderen.
+
+Regels:
+1. **Eigennamen corrigeren**: Fix foute spellingen van bekende namen (personen, bedrijven, producten). Voorbeelden: "Elan Musk" → "Elon Musk", "Chat GBT" → "ChatGPT", "Antrophic" → "Anthropic", "Goegel" → "Google".
+2. **Gebroken zinnen samenvoegen**: Whisper breekt soms zinnen op verkeerde plekken. Voeg fragmenten samen tot vloeiende zinnen.
+3. **Filler words verwijderen**: Verwijder "um", "uh", "eh", "you know", "like" (als filler), "sort of", "kind of" (als filler), "eigenlijk" (als filler), "zeg maar".
+4. **Herhalingen verwijderen**: Als dezelfde zin of frase direct herhaald wordt (stotteren/herhaling), houd er één.
+5. **Niets toevoegen**: Voeg GEEN nieuwe inhoud toe. Geen samenvattingen, geen commentaar, geen headers.
+6. **Niets weglaten**: Verwijder geen inhoudelijke zinnen. Alleen filler en herhalingen.
+
+Geef de opgeschoonde tekst terug. Niets anders."""
+
+CLEANUP_SCORE_PROMPT = """Vergelijk de originele en opgeschoonde transcriptie. Beoordeel:
+
+1. **eigennamen** (1-10): Zijn bekende namen correct gespeld?
+2. **vloeiendheid** (1-10): Lezen de zinnen vloeiend? Geen gebroken fragmenten?
+3. **schoonheid** (1-10): Zijn filler words en herhalingen verwijderd?
+4. **volledigheid** (1-10): Is alle inhoud behouden? Niets onterecht verwijderd?
+
+Antwoord ALLEEN in JSON:
+{"scores": {"eigennamen": N, "vloeiendheid": N, "schoonheid": N, "volledigheid": N}, "gemiddelde": N, "problemen": ["probleem 1", "probleem 2"]}"""
+
+
+def _cleanup_transcript(text):
+    """Run iterative cleanup loop on raw transcript text.
+
+    Fixes proper nouns, merges broken sentences, removes filler words.
+    Returns cleaned text.
+    """
+    word_count = len(text.split())
+    if word_count < TRANSCRIPT_CLEANUP_MIN_WORDS:
+        logger.info(f"Transcript too short for cleanup ({word_count} words), skipping")
+        return text
+
+    # Guard: skip if text is very large (>200k chars ~ 50k words)
+    if len(text) > 200_000:
+        logger.info(f"Transcript too large for cleanup ({len(text):,} chars), skipping")
+        return text
+
+    client = Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    current = text
+    for iteration in range(TRANSCRIPT_CLEANUP_MAX_ITERATIONS):
+        logger.info(f"Transcript cleanup iteration {iteration + 1}/{TRANSCRIPT_CLEANUP_MAX_ITERATIONS}")
+
+        # Cleanup pass
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=16000,
+            system=CLEANUP_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": current}],
+        )
+        cleaned = message.content[0].text.strip()
+
+        # Sanity check: cleaned version shouldn't lose more than 20% of content
+        if len(cleaned.split()) < word_count * 0.7:
+            logger.warning(
+                f"Cleanup removed too much content ({len(cleaned.split())} vs {word_count} words), keeping original"
+            )
+            return current
+
+        # Score pass
+        score_message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1024,
+            system=CLEANUP_SCORE_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"**ORIGINEEL:**\n{text[:5000]}\n\n**OPGESCHOOND:**\n{cleaned[:5000]}",
+                }
+            ],
+        )
+
+        try:
+            import json
+
+            score_text = score_message.content[0].text.strip()
+            if score_text.startswith("```"):
+                lines = score_text.split("\n")
+                lines = [line for line in lines if not line.strip().startswith("```")]
+                score_text = "\n".join(lines).strip()
+            score_result = json.loads(score_text)
+            scores = score_result.get("scores", {})
+            avg = score_result.get("gemiddelde", 0)
+            if not avg:
+                dims = ["eigennamen", "vloeiendheid", "schoonheid", "volledigheid"]
+                avg = sum(scores.get(d, 0) for d in dims) / len(dims)
+
+            logger.info(
+                f"Cleanup scores: "
+                + " | ".join(f"{k}={v}" for k, v in scores.items())
+                + f" | avg={avg:.1f}"
+            )
+
+            problems = score_result.get("problemen", [])
+            if avg >= 8 or not problems:
+                logger.info(f"Transcript cleanup complete: avg {avg:.1f}/10")
+                return cleaned
+
+            # Feed problems back into the next iteration
+            current = cleaned
+
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.warning(f"Failed to parse cleanup score: {e}")
+            return cleaned
+
+    return current
 
 
 def _get_transcription_client():
@@ -113,6 +227,9 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
         full_text = " ".join(all_text)
         logger.info(f"Combined {len(all_text)} chunks into full transcript")
 
+        # Run cleanup loop on combined text
+        full_text = _cleanup_transcript(full_text)
+
         if timestamps:
             return {"text": full_text, "segments": all_segments}
         return full_text
@@ -120,9 +237,11 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
         if timestamps:
             result = transcribe_single_file(client, model, audio_path, language, timestamps=True)
             segments = [{"start": seg["start"], "end": seg["end"], "text": seg["text"]} for seg in result.segments]
-            return {"text": result.text, "segments": segments}
+            cleaned_text = _cleanup_transcript(result.text)
+            return {"text": cleaned_text, "segments": segments}
         else:
-            return transcribe_single_file(client, model, audio_path, language)
+            raw = transcribe_single_file(client, model, audio_path, language)
+            return _cleanup_transcript(raw)
 
     logger.info("Transcription complete")
 

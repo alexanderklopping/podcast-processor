@@ -76,8 +76,98 @@ Examples:
 - "verwerk https://x.com/user/status/123" -> {{"actions": [{{"type": "process_url", "url": "https://x.com/user/status/123", "language": "en"}}], "description": "Twitter video verwerken"}} -> {{"actions": [{{"type": "adhoc_episode", "podcast_query": "Lex Fridman Podcast"}}], "description": "Laatste Lex Fridman aflevering downloaden"}}"""
 
 
+PARSE_MAX_RETRIES = 3  # Max parsing attempts before giving up
+
+# Validation rules for simulating execution feasibility
+ALLOWED_ACTIONS = {
+    "process_all",
+    "process_episode",
+    "process_url",
+    "adhoc_episode",
+    "find_segment",
+    "clip",
+    "feeds_update",
+}
+
+REQUIRED_FIELDS = {
+    "process_url": ["url"],
+    "adhoc_episode": ["podcast_query"],
+    "find_segment": ["podcast", "topic"],
+    "process_episode": ["podcast"],
+    "clip": ["file"],
+}
+
+
+def _validate_parsed_result(result, podcasts):
+    """Validate a parsed result and return (validated_result, issues).
+
+    Returns tuple of (result_dict, list_of_issue_strings).
+    Issues are problems that should trigger a retry with feedback.
+    """
+    issues = []
+
+    if not isinstance(result.get("actions"), list):
+        return None, ["Response has no 'actions' list"]
+
+    if not result["actions"]:
+        return None, ["No actions were parsed from the command"]
+
+    validated_actions = []
+    podcast_names = [p["name"].lower() for p in podcasts]
+
+    for action in result["actions"]:
+        if not isinstance(action, dict):
+            issues.append("Action is not a dict")
+            continue
+
+        action_type = action.get("type")
+        if action_type not in ALLOWED_ACTIONS:
+            issues.append(f"Unknown action type: {action_type}")
+            continue
+
+        # Check required fields
+        missing = [f for f in REQUIRED_FIELDS.get(action_type, []) if not action.get(f)]
+        if missing:
+            issues.append(f"Action '{action_type}' missing required fields: {missing}")
+            continue
+
+        # Simulate execution: check if podcast name matches configured podcasts
+        if action_type == "process_episode":
+            podcast_name = action.get("podcast", "").lower()
+            if not any(podcast_name in pn or pn in podcast_name for pn in podcast_names):
+                issues.append(
+                    f"Podcast '{action.get('podcast')}' not in configured list. "
+                    f"Use 'adhoc_episode' instead of 'process_episode' for non-configured podcasts. "
+                    f"Configured: {', '.join(p['name'] for p in podcasts)}"
+                )
+                continue
+
+        if action_type == "find_segment":
+            podcast_name = action.get("podcast", "").lower()
+            if not any(podcast_name in pn or pn in podcast_name for pn in podcast_names):
+                issues.append(
+                    f"Podcast '{action.get('podcast')}' not in configured list. "
+                    f"Use 'adhoc_episode' with a topic instead of 'find_segment' for non-configured podcasts."
+                )
+                continue
+
+        # Check URL validity for process_url
+        if action_type == "process_url":
+            url = action.get("url", "")
+            if not url.startswith(("http://", "https://")):
+                issues.append(f"Invalid URL: '{url}' - must start with http:// or https://")
+                continue
+
+        validated_actions.append(action)
+
+    result["actions"] = validated_actions
+    return result, issues
+
+
 def parse_command(user_input):
     """Parse a natural language command into structured actions.
+
+    Uses an iterative loop: parse → validate → retry with feedback if issues found.
 
     Args:
         user_input: Natural language command string.
@@ -89,69 +179,68 @@ def parse_command(user_input):
     podcasts_str = "\n".join(f"- {p['name']} ({p.get('language', 'en')}): {p['url']}" for p in podcasts)
 
     client = Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1024,
-        system=PARSE_SYSTEM_PROMPT.format(
-            podcasts=podcasts_str,
-            today=datetime.now().strftime("%Y-%m-%d"),
-        ),
-        messages=[{"role": "user", "content": user_input}],
+    system_prompt = PARSE_SYSTEM_PROMPT.format(
+        podcasts=podcasts_str,
+        today=datetime.now().strftime("%Y-%m-%d"),
     )
 
-    response_text = message.content[0].text.strip()
+    messages = [{"role": "user", "content": user_input}]
 
-    # Strip markdown code blocks if present
-    if response_text.startswith("```"):
-        lines = response_text.split("\n")
-        # Remove first line (```json) and last line (```)
-        lines = [line for line in lines if not line.strip().startswith("```")]
-        response_text = "\n".join(lines).strip()
+    for attempt in range(PARSE_MAX_RETRIES):
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1024,
+            system=system_prompt,
+            messages=messages,
+        )
 
-    try:
-        result = json.loads(response_text)
-    except json.JSONDecodeError:
-        logger.error(f"Failed to parse NLP response: {response_text}")
-        return {"actions": [], "description": "Could not parse command", "error": True}
+        response_text = message.content[0].text.strip()
 
-    # Validate structure
-    ALLOWED_ACTIONS = {
-        "process_all",
-        "process_episode",
-        "process_url",
-        "adhoc_episode",
-        "find_segment",
-        "clip",
-        "feeds_update",
-    }
-    if not isinstance(result.get("actions"), list):
-        return {"actions": [], "description": "Invalid response structure", "error": True}
+        # Strip markdown code blocks if present
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            lines = [line for line in lines if not line.strip().startswith("```")]
+            response_text = "\n".join(lines).strip()
 
-    # Required fields per action type
-    REQUIRED_FIELDS = {
-        "process_url": ["url"],
-        "adhoc_episode": ["podcast_query"],
-        "find_segment": ["podcast", "topic"],
-        "process_episode": ["podcast"],
-        "clip": ["file"],
-    }
+        try:
+            result = json.loads(response_text)
+        except json.JSONDecodeError:
+            if attempt < PARSE_MAX_RETRIES - 1:
+                logger.warning(f"Parse attempt {attempt + 1} failed (invalid JSON), retrying...")
+                messages = [
+                    {"role": "user", "content": user_input},
+                    {"role": "assistant", "content": response_text},
+                    {
+                        "role": "user",
+                        "content": "That response was not valid JSON. Please return ONLY valid JSON "
+                        "in the exact format specified. No markdown, no explanation.",
+                    },
+                ]
+                continue
+            logger.error(f"Failed to parse NLP response after {PARSE_MAX_RETRIES} attempts")
+            return {"actions": [], "description": "Could not parse command", "error": True}
 
-    validated_actions = []
-    for action in result["actions"]:
-        if not isinstance(action, dict):
+        # Validate the parsed result
+        validated, issues = _validate_parsed_result(result, podcasts)
+
+        if validated and validated.get("actions") and not issues:
+            logger.info(f"Parsed command (attempt {attempt + 1}): {validated.get('description', '')}")
+            return validated
+
+        if issues and attempt < PARSE_MAX_RETRIES - 1:
+            feedback = "Issues with your response:\n" + "\n".join(f"- {issue}" for issue in issues)
+            feedback += f"\n\nOriginal command: \"{user_input}\"\nPlease fix these issues and return corrected JSON."
+            logger.warning(f"Parse attempt {attempt + 1} had issues: {issues}, retrying...")
+            messages = [
+                {"role": "user", "content": user_input},
+                {"role": "assistant", "content": response_text},
+                {"role": "user", "content": feedback},
+            ]
             continue
-        action_type = action.get("type")
-        if action_type not in ALLOWED_ACTIONS:
-            logger.warning(f"Skipping unknown action type: {action_type}")
-            continue
-        # Check required fields
-        missing = [f for f in REQUIRED_FIELDS.get(action_type, []) if not action.get(f)]
-        if missing:
-            logger.warning(f"Action {action_type} missing required fields: {missing}")
-            continue
-        validated_actions.append(action)
 
-    result["actions"] = validated_actions
-    logger.info(f"Parsed command: {result.get('description', '')}")
-    return result
+        # Last attempt or no issues but no actions
+        if validated:
+            logger.info(f"Parsed command (attempt {attempt + 1}): {validated.get('description', '')}")
+            return validated
+
+    return {"actions": [], "description": "Could not parse command", "error": True}
