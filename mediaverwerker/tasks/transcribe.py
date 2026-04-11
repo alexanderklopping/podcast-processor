@@ -21,12 +21,21 @@ logger = logging.getLogger("mediaverwerker")
 TRANSCRIPT_CLEANUP_MAX_ITERATIONS = 2
 TRANSCRIPT_CLEANUP_MIN_WORDS = 500  # Skip cleanup for very short transcripts
 
-CLEANUP_SYSTEM_PROMPT = """Je bent een transcriptie-editor. Je krijgt een ruwe transcriptie van een podcast aflevering (via Whisper/Groq spraakherkenning). Je taak is de tekst opschonen ZONDER inhoud te veranderen.
+CLEANUP_SYSTEM_PROMPT = """Je bent een transcriptie-editor.
+Je krijgt een ruwe transcriptie van een podcast aflevering
+(via Whisper/Groq spraakherkenning).
+Je taak is de tekst opschonen ZONDER inhoud te veranderen.
 
 Regels:
-1. **Eigennamen corrigeren**: Fix foute spellingen van bekende namen (personen, bedrijven, producten). Voorbeelden: "Elan Musk" → "Elon Musk", "Chat GBT" → "ChatGPT", "Antrophic" → "Anthropic", "Goegel" → "Google".
-2. **Gebroken zinnen samenvoegen**: Whisper breekt soms zinnen op verkeerde plekken. Voeg fragmenten samen tot vloeiende zinnen.
-3. **Filler words verwijderen**: Verwijder "um", "uh", "eh", "you know", "like" (als filler), "sort of", "kind of" (als filler), "eigenlijk" (als filler), "zeg maar".
+1. **Eigennamen corrigeren**: Fix foute spellingen van bekende namen
+   (personen, bedrijven, producten). Voorbeelden:
+   "Elan Musk" → "Elon Musk", "Chat GBT" → "ChatGPT",
+   "Antrophic" → "Anthropic", "Goegel" → "Google".
+2. **Gebroken zinnen samenvoegen**: Whisper breekt soms zinnen op verkeerde plekken.
+   Voeg fragmenten samen tot vloeiende zinnen.
+3. **Filler words verwijderen**: Verwijder "um", "uh", "eh", "you know",
+   "like" (als filler), "sort of", "kind of" (als filler),
+   "eigenlijk" (als filler), "zeg maar".
 4. **Herhalingen verwijderen**: Als dezelfde zin of frase direct herhaald wordt (stotteren/herhaling), houd er één.
 5. **Niets toevoegen**: Voeg GEEN nieuwe inhoud toe. Geen samenvattingen, geen commentaar, geen headers.
 6. **Niets weglaten**: Verwijder geen inhoudelijke zinnen. Alleen filler en herhalingen.
@@ -41,7 +50,16 @@ CLEANUP_SCORE_PROMPT = """Vergelijk de originele en opgeschoonde transcriptie. B
 4. **volledigheid** (1-10): Is alle inhoud behouden? Niets onterecht verwijderd?
 
 Antwoord ALLEEN in JSON:
-{"scores": {"eigennamen": N, "vloeiendheid": N, "schoonheid": N, "volledigheid": N}, "gemiddelde": N, "problemen": ["probleem 1", "probleem 2"]}"""
+{
+  "scores": {
+    "eigennamen": N,
+    "vloeiendheid": N,
+    "schoonheid": N,
+    "volledigheid": N
+  },
+  "gemiddelde": N,
+  "problemen": ["probleem 1", "probleem 2"]
+}"""
 
 
 def _cleanup_transcript(text):
@@ -110,11 +128,7 @@ def _cleanup_transcript(text):
                 dims = ["eigennamen", "vloeiendheid", "schoonheid", "volledigheid"]
                 avg = sum(scores.get(d, 0) for d in dims) / len(dims)
 
-            logger.info(
-                f"Cleanup scores: "
-                + " | ".join(f"{k}={v}" for k, v in scores.items())
-                + f" | avg={avg:.1f}"
-            )
+            logger.info("Cleanup scores: " + " | ".join(f"{k}={v}" for k, v in scores.items()) + f" | avg={avg:.1f}")
 
             problems = score_result.get("problemen", [])
             if avg >= 8 or not problems:

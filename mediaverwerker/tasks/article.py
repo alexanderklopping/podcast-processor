@@ -337,7 +337,7 @@ Beoordeel dit artikel volgens de instructies. Antwoord ALLEEN in JSON."""
         result["gemiddelde"] = round(avg, 1)
 
         logger.info(
-            f"Quality scores: "
+            "Quality scores: "
             + " | ".join(f"{dim}={scores[dim]}" for dim in dimensions)
             + f" | avg={result['gemiddelde']}"
         )
@@ -397,8 +397,7 @@ def _run_quality_loop(client, transcript_text, article):
             return article
 
         logger.info(
-            f"Score {avg_score}/10 (target: {QUALITY_LOOP_TARGET_SCORE}), "
-            f"improving {len(feedback_items)} issue(s)..."
+            f"Score {avg_score}/10 (target: {QUALITY_LOOP_TARGET_SCORE}), improving {len(feedback_items)} issue(s)..."
         )
 
         improved = _improve_article(client, transcript_text, article, feedback_items)
@@ -413,7 +412,9 @@ def _run_quality_loop(client, transcript_text, article):
     # Final score after all iterations
     final_score = _score_article(client, transcript_text, article)
     if final_score:
-        logger.info(f"Final quality score after {QUALITY_LOOP_MAX_ITERATIONS} iterations: {final_score['gemiddelde']}/10")
+        logger.info(
+            f"Final quality score after {QUALITY_LOOP_MAX_ITERATIONS} iterations: {final_score['gemiddelde']}/10"
+        )
 
     return article
 

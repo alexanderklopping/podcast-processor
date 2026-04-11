@@ -229,7 +229,7 @@ def parse_command(user_input):
 
         if issues and attempt < PARSE_MAX_RETRIES - 1:
             feedback = "Issues with your response:\n" + "\n".join(f"- {issue}" for issue in issues)
-            feedback += f"\n\nOriginal command: \"{user_input}\"\nPlease fix these issues and return corrected JSON."
+            feedback += f'\n\nOriginal command: "{user_input}"\nPlease fix these issues and return corrected JSON.'
             logger.warning(f"Parse attempt {attempt + 1} had issues: {issues}, retrying...")
             messages = [
                 {"role": "user", "content": user_input},
