@@ -1,6 +1,7 @@
 """Pipeline orchestration and parallel execution."""
 
 import logging
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -540,15 +541,19 @@ def process_adhoc_episode(podcast_query, date=None, topic=None, output_format="t
 
         # Save transcript to output dir
         dest_transcript = out_dir / f"{sanitize_filename(episode['title'])}_transcript.txt"
-        with open(dest_transcript, "w", encoding="utf-8") as f:
+        base_real = os.path.realpath(out_dir)
+        target_real = os.path.realpath(dest_transcript)
+        if os.path.commonpath([base_real, target_real]) != base_real:
+            raise Exception("Invalid file path")
+        with open(target_real, "w", encoding="utf-8") as f:
             f.write(f"# {episode['title']}\n")
             f.write(f"Podcast: {episode['podcast_name']}\n")
             f.write(f"Gepubliceerd: {episode['published']}\n\n---\n\n")
             f.write(text)
-        logger.info(f"Transcript opgeslagen: {dest_transcript}")
+        logger.info(f"Transcript opgeslagen: {target_real}")
 
         result["output_dir"] = str(out_dir)
-        result["output_files"] = [str(dest_audio), str(dest_transcript)]
+        result["output_files"] = [str(dest_audio), str(target_real)]
 
     return result
 

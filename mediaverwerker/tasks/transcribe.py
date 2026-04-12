@@ -1,6 +1,7 @@
 """Audio transcription via OpenAI Whisper API or Groq."""
 
 import logging
+import os
 import time
 
 from anthropic import Anthropic
@@ -160,6 +161,8 @@ def _get_transcription_client():
 @retry_with_backoff(max_retries=3, delay=5)
 def transcribe_single_file(client, model, audio_path, language="en", timestamps=False):
     """Transcribe a single audio file with retry logic."""
+    if ".." in str(audio_path):
+        raise Exception("Invalid file path")
     with open(audio_path, "rb") as audio_file:
         response_format = "verbose_json" if timestamps else "text"
         result = client.audio.transcriptions.create(
@@ -268,7 +271,11 @@ def save_transcript(episode, transcript):
 
     text = transcript if isinstance(transcript, str) else transcript.get("text", "")
 
-    with open(filepath, "w", encoding="utf-8") as f:
+    base_real = os.path.realpath(TRANSCRIPTS_DIR)
+    target_real = os.path.realpath(filepath)
+    if os.path.commonpath([base_real, target_real]) != base_real:
+        raise Exception("Invalid file path")
+    with open(target_real, "w", encoding="utf-8") as f:
         f.write(f"# {episode['title']}\n")
         if episode.get("podcast_name"):
             f.write(f"Bron: {episode['podcast_name']}\n")
