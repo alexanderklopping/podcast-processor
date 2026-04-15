@@ -208,6 +208,7 @@ def cmd_clip(
     subtitles: bool = typer.Option(True, "--subtitles/--no-subtitles", help="Generate SRT subtitles"),
     burn: bool = typer.Option(False, "--burn", help="Burn subtitles into video"),
     language: str = typer.Option("nl", "--language", "-l", help="Language code"),
+    instart: bool = typer.Option(False, "--instart", help="Find a short pre-recorded insert (30-200s) instead of a full segment"),
 ):
     """Clip a segment from a video/audio file."""
     _init()
@@ -225,16 +226,19 @@ def cmd_clip(
     result = transcribe_audio(input_file, language=language, timestamps=True)
     segments = result["segments"]
 
+    segment_type = "instart" if instart else "segment"
+
     if topic:
-        typer.echo(f"Finding segment about: {topic}")
-        segment = find_segment(segments, topic)
+        typer.echo(f"Finding {segment_type} about: {topic}")
+        segment = find_segment(segments, topic, segment_type=segment_type)
         if not segment:
             typer.echo(f"Topic '{topic}' not found in transcript")
             raise typer.Exit(1)
 
         start, end = segment["start"], segment["end"]
         matched_segments = segment["segments"]
-        clip_name = f"{base_name}_{topic.replace(' ', '_')}"
+        suffix = "_instart" if instart else ""
+        clip_name = f"{base_name}_{topic.replace(' ', '_')}{suffix}"
     else:
         typer.echo("No topic specified, using full file")
         typer.echo(f"Transcript: {result['text'][:500]}...")
