@@ -14,6 +14,7 @@ from .pipeline import (
     process_adhoc_episode,
     process_and_extract,
     process_episode,
+    process_eva_episode,
     process_individual_url,
     run_full_pipeline,
 )
@@ -104,6 +105,26 @@ def _dispatch_actions(parsed):
                     typer.echo(f"  {f}")
             else:
                 typer.echo(f"Klaar: {result.get('episode', {}).get('title', '?')}")
+
+        elif action_type == "eva":
+            video_path_str = action.get("video_path", "")
+            if not video_path_str:
+                typer.echo("Geen videopad opgegeven voor Eva")
+                continue
+            vp = Path(video_path_str).expanduser().resolve()
+            if not vp.exists():
+                typer.echo(f"Bestand niet gevonden: {vp}")
+                continue
+            result = process_eva_episode(
+                vp,
+                burn=action.get("burn", True),
+                no_subtitles=action.get("no_subtitles", False),
+            )
+            if result.get("error"):
+                typer.echo(f"Error: {result['error']}")
+            else:
+                final = result.get("final_path") or result.get("clip_path")
+                typer.echo(f"Klaar: {final}")
 
         elif action_type == "feeds_update":
             update_all_rss_feeds()
@@ -235,6 +256,35 @@ def cmd_clip(
             typer.echo(f"Done: {clip_path} + {srt_path}")
     else:
         typer.echo(f"Done: {clip_path}")
+
+
+@app.command("eva")
+def cmd_eva(
+    video_path: Path = typer.Argument(..., help="Pad naar Eva aflevering (.mp4)"),
+    output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o", help="Output directory"),
+    burn: bool = typer.Option(True, "--burn/--no-burn", help="Ondertitels inbranden in video"),
+    no_subtitles: bool = typer.Option(False, "--no-subtitles", help="Sla ondertiteling over"),
+):
+    """Knip het AI-segment uit een Eva (NPO1) aflevering."""
+    _init()
+
+    if not video_path.exists():
+        typer.echo(f"Bestand niet gevonden: {video_path}")
+        raise typer.Exit(1)
+
+    result = process_eva_episode(video_path, output_dir=output_dir, burn=burn, no_subtitles=no_subtitles)
+
+    if result.get("error"):
+        typer.echo(f"Error: {result['error']}")
+        raise typer.Exit(1)
+
+    typer.echo(f"\nKlaar!")
+    if result.get("final_path"):
+        typer.echo(f"  Video met ondertitels: {result['final_path']}")
+    if result.get("srt_path"):
+        typer.echo(f"  Ondertitels: {result['srt_path']}")
+    typer.echo(f"  Clip: {result['clip_path']}")
+    typer.echo(f"  Duur: {result['duration']:.0f}s")
 
 
 @app.command("feeds")

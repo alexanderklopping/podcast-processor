@@ -125,3 +125,105 @@ Rules:
 
     logger.info(f"Topic '{topic}' not found in transcript")
     return None
+
+
+# Keywords that signal the AI segment in Eva (NPO1)
+EVA_AI_KEYWORDS = [
+    "kunstmatige intelligentie",
+    "artificial intelligence",
+    " ai ",
+    " ai-",
+    "chatgpt",
+    "deepseek",
+    "openai",
+    "algoritme",
+    "klöpping",
+    "klopping",
+    "alexander klöpping",
+]
+
+EVA_INTRO_KEYWORDS = [
+    "klöpping",
+    "klopping",
+    "alexander klöpping",
+    "alexander klopping",
+    "techdeskundige",
+    "wereld van ai",
+]
+
+
+def find_eva_segment(segments, margin=5.0):
+    """Find the AI segment in an Eva (NPO1) episode using keyword scoring.
+
+    Args:
+        segments: List of dicts with 'start', 'end', 'text' keys.
+        margin: Seconds of margin to add before/after the segment.
+
+    Returns:
+        dict with 'start', 'end', 'text', 'confidence', 'segments' keys,
+        or None if no AI segment found.
+    """
+    logger.info("Searching for AI segment in Eva episode (keyword-based)")
+
+    # Score each segment for AI-relevance
+    scored = []
+    for seg in segments:
+        text = seg["text"].lower()
+        score = sum(1 for kw in EVA_AI_KEYWORDS if kw in text)
+        scored.append((seg["start"], seg["end"], score, seg["text"], seg))
+
+    # Find the introduction (first mention of Klöpping or AI intro)
+    intro_start = None
+    for start, end, score, text, seg in scored:
+        text_lower = text.lower()
+        if any(kw in text_lower for kw in EVA_INTRO_KEYWORDS):
+            intro_start = start
+            break
+
+    if intro_start is None:
+        # Fallback: first segment with any AI keyword
+        for start, end, score, text, seg in scored:
+            if score > 0:
+                intro_start = start
+                break
+
+    if intro_start is None:
+        logger.warning("No AI segment found in Eva episode")
+        return None
+
+    # Find the end: last AI keyword occurrence after intro
+    last_ai_time = intro_start
+    for start, end, score, text, seg in scored:
+        if start >= intro_start and score > 0:
+            last_ai_time = end
+
+    # Look for a natural ending (up to 30s after last keyword)
+    segment_end = last_ai_time
+    for start, end, score, text, seg in scored:
+        if start > last_ai_time and start <= last_ai_time + 30:
+            text_lower = text.lower()
+            if any(w in text_lower for w in ["dank", "bedankt", "dankjewel"]):
+                segment_end = end
+                break
+            segment_end = end
+        elif start > last_ai_time + 30:
+            break
+
+    # Apply margin
+    start_time = max(0, intro_start - margin)
+    end_time = segment_end + margin
+
+    # Collect matched segments
+    matched = [seg for _, _, _, _, seg in scored if seg["start"] >= start_time and seg["end"] <= end_time + 5]
+    segment_text = " ".join(seg["text"].strip() for seg in matched)
+
+    duration = end_time - start_time
+    logger.info(f"Eva AI segment found: {start_time:.1f}s - {end_time:.1f}s ({duration:.0f}s)")
+
+    return {
+        "start": start_time,
+        "end": end_time,
+        "text": segment_text,
+        "confidence": 1.0,
+        "segments": matched,
+    }
