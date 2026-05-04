@@ -125,6 +125,7 @@ def _resolve_secret(secret_name, *, use_1password=True):
 
     return None
 
+
 # API keys - prefer .env file, fall back to environment
 TRANSCRIPTION_PROVIDER = _first_nonempty(
     _env_config.get("TRANSCRIPTION_PROVIDER"),
