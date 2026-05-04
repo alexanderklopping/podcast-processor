@@ -14,8 +14,8 @@ SEGMENT_MAX_RETRIES = 5  # Max API calls total (initial + retries)
 
 # Duration constraints per segment type
 DURATION_LIMITS = {
-    "segment": (600, 1200),   # 10-20 minutes
-    "instart": (20, 370),     # 20s-6min
+    "segment": (600, 1200),  # 10-20 minutes
+    "instart": (20, 370),  # 20s-6min
 }
 
 
@@ -131,27 +131,36 @@ If no match: {{"start_index": null, "end_index": null, "confidence": 0.0, "alter
         if duration > max_dur and attempt < SEGMENT_MAX_RETRIES - 1:
             logger.warning(f"{segment_type} too long ({duration:.0f}s > {max_dur}s), asking to narrow")
             messages.append({"role": "assistant", "content": response_text})
-            messages.append({"role": "user", "content": (
-                f"Your selection is {duration:.0f} seconds ({duration/60:.1f} min), "
-                f"but a {segment_type} should be {min_dur}-{max_dur} seconds. "
-                f"Please narrow your selection. Return only JSON."
-            )})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"Your selection is {duration:.0f} seconds ({duration / 60:.1f} min), "
+                        f"but a {segment_type} should be {min_dur}-{max_dur} seconds. "
+                        f"Please narrow your selection. Return only JSON."
+                    ),
+                }
+            )
             continue
         elif duration < min_dur and attempt < SEGMENT_MAX_RETRIES - 1:
             logger.warning(f"{segment_type} too short ({duration:.0f}s < {min_dur}s), asking to widen")
             messages.append({"role": "assistant", "content": response_text})
-            messages.append({"role": "user", "content": (
-                f"Your selection is only {duration:.0f} seconds, "
-                f"but a {segment_type} should be {min_dur}-{max_dur} seconds. "
-                f"Please widen your selection. Return only JSON."
-            )})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"Your selection is only {duration:.0f} seconds, "
+                        f"but a {segment_type} should be {min_dur}-{max_dur} seconds. "
+                        f"Please widen your selection. Return only JSON."
+                    ),
+                }
+            )
             continue
 
         segment_text = " ".join(seg["text"].strip() for seg in matched_segments)
 
         logger.info(
-            f"Found {segment_type}: {start_time:.1f}s - {end_time:.1f}s "
-            f"({duration:.0f}s, confidence: {confidence:.1%})"
+            f"Found {segment_type}: {start_time:.1f}s - {end_time:.1f}s ({duration:.0f}s, confidence: {confidence:.1%})"
         )
 
         return {
