@@ -39,8 +39,13 @@ Available actions:
 - "clip": Clip a segment from a local file
   - input: file path
   - topic: topic to find (optional)
+  - segment_type: "segment" (default, full studio segment 12-16 min) or "instart" (pre-recorded insert filmed on location, 30-200 seconds)
   - subtitles: boolean
   - burn: boolean
+- "eva": Process an Eva (NPO1) episode - find and clip the AI segment (Alexander Klöpping)
+  - video_path: path to the downloaded Eva .mp4 file (required)
+  - burn: burn subtitles into video (default: true)
+  - no_subtitles: skip subtitles entirely (default: false)
 - "feeds_update": Update and push RSS feeds
 - "process_url": Process a video/audio from a direct URL (YouTube, Twitter/X, etc.)
   - url: the full URL to process
@@ -73,7 +78,11 @@ Examples:
 - "geef me het stuk over AI regulation uit de laatste dwarkesh" -> {{"actions": [{{"type": "find_segment", "podcast": "Dwarkesh", "topic": "AI regulation", "output": "transcript"}}], "description": "AI regulation segment zoeken in laatste Dwarkesh"}}
 - "download de laatste lex fridman"
 - "verwerk https://youtube.com/watch?v=abc" -> {{"actions": [{{"type": "process_url", "url": "https://youtube.com/watch?v=abc", "language": "en"}}], "description": "YouTube video verwerken"}}
-- "verwerk https://x.com/user/status/123" -> {{"actions": [{{"type": "process_url", "url": "https://x.com/user/status/123", "language": "en"}}], "description": "Twitter video verwerken"}} -> {{"actions": [{{"type": "adhoc_episode", "podcast_query": "Lex Fridman Podcast"}}], "description": "Laatste Lex Fridman aflevering downloaden"}}"""
+- "verwerk https://x.com/user/status/123" -> {{"actions": [{{"type": "process_url", "url": "https://x.com/user/status/123", "language": "en"}}], "description": "Twitter video verwerken"}} -> {{"actions": [{{"type": "adhoc_episode", "podcast_query": "Lex Fridman Podcast"}}], "description": "Laatste Lex Fridman aflevering downloaden"}}
+- "verwerk eva ~/Downloads/eva.mp4" -> {{"actions": [{{"type": "eva", "video_path": "~/Downloads/eva.mp4"}}], "description": "AI-segment uit Eva knippen en ondertitelen"}}
+- "knip eva ~/Downloads/eva.mp4 zonder ondertitels" -> {{"actions": [{{"type": "eva", "video_path": "~/Downloads/eva.mp4", "no_subtitles": true}}], "description": "AI-segment uit Eva knippen zonder ondertitels"}}
+
+IMPORTANT: When the user mentions "Eva" (the TV show) with a file path, ALWAYS use the "eva" action type. This is a special workflow for extracting the AI/tech segment from the NPO1 show Eva."""
 
 
 PARSE_MAX_RETRIES = 3  # Max parsing attempts before giving up
@@ -86,6 +95,7 @@ ALLOWED_ACTIONS = {
     "adhoc_episode",
     "find_segment",
     "clip",
+    "eva",
     "feeds_update",
 }
 
@@ -95,6 +105,7 @@ REQUIRED_FIELDS = {
     "find_segment": ["podcast", "topic"],
     "process_episode": ["podcast"],
     "clip": ["file"],
+    "eva": ["video_path"],
 }
 
 

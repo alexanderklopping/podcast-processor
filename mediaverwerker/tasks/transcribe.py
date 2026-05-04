@@ -206,16 +206,20 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
                     result = transcribe_single_file(client, model, chunk_path, language, timestamps=True)
                     all_text.append(result.text)
                     for seg in result.segments:
+                        seg_start = seg["start"] if isinstance(seg, dict) else seg.start
+                        seg_end = seg["end"] if isinstance(seg, dict) else seg.end
+                        seg_text = seg["text"] if isinstance(seg, dict) else seg.text
                         all_segments.append(
                             {
-                                "start": seg["start"] + time_offset,
-                                "end": seg["end"] + time_offset,
-                                "text": seg["text"],
+                                "start": seg_start + time_offset,
+                                "end": seg_end + time_offset,
+                                "text": seg_text,
                             }
                         )
                     # Estimate chunk duration from last segment
                     if result.segments:
-                        time_offset += result.segments[-1]["end"]
+                        last = result.segments[-1]
+                        time_offset += last["end"] if isinstance(last, dict) else last.end
                 else:
                     transcript = transcribe_single_file(client, model, chunk_path, language)
                     all_text.append(transcript)
