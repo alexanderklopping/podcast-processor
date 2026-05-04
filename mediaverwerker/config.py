@@ -1,6 +1,8 @@
 """Configuration, paths, and environment loading."""
 
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -12,21 +14,139 @@ BASE_DIR = Path(__file__).parent.parent.resolve()
 # Load environment variables from project root
 _env_config = dotenv_values(BASE_DIR / ".env")
 
+# Cloud mode detection
+IS_CLOUD = os.getenv("RENDER") is not None or os.getenv("IS_CLOUD") == "true"
+
+_ONEPASSWORD_NOTES = []
+
+
+def _first_nonempty(*values):
+    for value in values:
+        if value:
+            return value
+    return None
+
+
+def _is_truthy(value):
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _add_1password_note(message):
+    if message not in _ONEPASSWORD_NOTES:
+        _ONEPASSWORD_NOTES.append(message)
+
+
+def _1password_enabled():
+    disable_flag = _first_nonempty(
+        _env_config.get("MEDIAVERWERKER_DISABLE_1PASSWORD"),
+        os.getenv("MEDIAVERWERKER_DISABLE_1PASSWORD"),
+    )
+    return not IS_CLOUD and not _is_truthy(disable_flag)
+
+
+def _1password_vault():
+    return _first_nonempty(
+        _env_config.get("MEDIAVERWERKER_1PASSWORD_VAULT"),
+        os.getenv("MEDIAVERWERKER_1PASSWORD_VAULT"),
+        "Private",
+    )
+
+
+def _1password_item():
+    return _first_nonempty(
+        _env_config.get("MEDIAVERWERKER_1PASSWORD_ITEM"),
+        os.getenv("MEDIAVERWERKER_1PASSWORD_ITEM"),
+        "podcast-processor",
+    )
+
+
+def _find_op_binary():
+    configured = _first_nonempty(_env_config.get("OP_BIN"), os.getenv("OP_BIN"))
+    if configured:
+        return configured if Path(configured).exists() else shutil.which(configured)
+
+    if shutil.which("op"):
+        return shutil.which("op")
+
+    fallback = Path("/opt/homebrew/bin/op")
+    if fallback.exists():
+        return str(fallback)
+
+    return None
+
+
+def _1password_reference(secret_name):
+    override_key = f"MEDIAVERWERKER_1PASSWORD_{secret_name}_REF"
+    return _first_nonempty(
+        _env_config.get(override_key),
+        os.getenv(override_key),
+        f"op://{_1password_vault()}/{_1password_item()}/{secret_name}",
+    )
+
+
+def _read_1password_secret(secret_name):
+    if not _1password_enabled():
+        return None
+
+    op_binary = _find_op_binary()
+    if not op_binary:
+        _add_1password_note("1Password CLI not found. Install `op` to load local project secrets.")
+        return None
+
+    reference = _1password_reference(secret_name)
+    try:
+        result = subprocess.run(
+            [op_binary, "read", reference],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip() or "unable to read secret from 1Password"
+        _add_1password_note(f"{secret_name}: {detail}")
+        return None
+
+    value = result.stdout.strip()
+    if not value:
+        _add_1password_note(f"{secret_name}: empty value returned from 1Password")
+        return None
+
+    os.environ[secret_name] = value
+    return value
+
+
+def _resolve_secret(secret_name, *, use_1password=True):
+    value = _first_nonempty(_env_config.get(secret_name), os.getenv(secret_name))
+    if value:
+        return value
+
+    if use_1password:
+        return _read_1password_secret(secret_name)
+
+    return None
+
 # API keys - prefer .env file, fall back to environment
-OPENAI_API_KEY = _env_config.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-ANTHROPIC_API_KEY = _env_config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
-GITHUB_TOKEN = _env_config.get("GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN") or os.getenv("FEEDS_GITHUB_TOKEN")
+TRANSCRIPTION_PROVIDER = _first_nonempty(
+    _env_config.get("TRANSCRIPTION_PROVIDER"),
+    os.getenv("TRANSCRIPTION_PROVIDER"),
+    "groq",
+)
+
+OPENAI_API_KEY = _resolve_secret(
+    "OPENAI_API_KEY",
+    use_1password=TRANSCRIPTION_PROVIDER == "openai",
+)
+ANTHROPIC_API_KEY = _resolve_secret("ANTHROPIC_API_KEY")
+GITHUB_TOKEN = _first_nonempty(
+    _env_config.get("GITHUB_TOKEN"),
+    os.getenv("GITHUB_TOKEN"),
+    os.getenv("FEEDS_GITHUB_TOKEN"),
+)
 YTDLP_COOKIES_FROM_BROWSER = _env_config.get("YTDLP_COOKIES_FROM_BROWSER") or os.getenv("YTDLP_COOKIES_FROM_BROWSER")
 YTDLP_COOKIES_FILE = _env_config.get("YTDLP_COOKIES_FILE") or os.getenv("YTDLP_COOKIES_FILE")
 YTDLP_IMPERSONATE = _env_config.get("YTDLP_IMPERSONATE") or os.getenv("YTDLP_IMPERSONATE")
 YTDLP_REMOTE_COMPONENTS = _env_config.get("YTDLP_REMOTE_COMPONENTS") or os.getenv("YTDLP_REMOTE_COMPONENTS")
-GROQ_API_KEY = _env_config.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
-
-# Transcription provider: "groq" (default, cheapest) or "openai"
-TRANSCRIPTION_PROVIDER = _env_config.get("TRANSCRIPTION_PROVIDER") or os.getenv("TRANSCRIPTION_PROVIDER") or "groq"
-
-# Cloud mode detection
-IS_CLOUD = os.getenv("RENDER") is not None or os.getenv("IS_CLOUD") == "true"
+GROQ_API_KEY = _resolve_secret("GROQ_API_KEY", use_1password=TRANSCRIPTION_PROVIDER == "groq")
 
 # Directories
 PODCASTS_FILE = BASE_DIR / "podcasts.json"
@@ -57,7 +177,6 @@ def init():
 def validate_environment():
     """Validate that all required environment variables and tools are set."""
     import logging
-    import subprocess
 
     logger = logging.getLogger(__name__)
     missing = []
@@ -71,6 +190,13 @@ def validate_environment():
 
     if missing:
         logger.error(f"Missing required environment variables: {', '.join(missing)}")
+        if _1password_enabled():
+            for note in _ONEPASSWORD_NOTES:
+                logger.info(f"1Password: {note}")
+            logger.info(
+                "Local secret lookup expects a 1Password item named "
+                f"'{_1password_item()}' in vault '{_1password_vault()}', with field names matching the env vars."
+            )
         return False
 
     if not PODCASTS_FILE.exists():
