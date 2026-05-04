@@ -39,6 +39,7 @@ Available actions:
 - "clip": Clip a segment from a local file
   - input: file path
   - topic: topic to find (optional)
+  - segment_type: "segment" (default, full studio segment 12-16 min) or "instart" (pre-recorded insert filmed on location, 30-200 seconds)
   - subtitles: boolean
   - burn: boolean
 - "eva": Process an Eva (NPO1) episode - find and clip the AI segment (Alexander Klöpping)
