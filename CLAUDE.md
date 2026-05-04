@@ -70,6 +70,7 @@ State persistence across runs: `processed_episodes.json` is stored in the separa
 ## Key constraints
 
 - **Never process full podcast archives.** Only the latest 2 episodes per configured podcast (`feed.entries[:2]`).
-- API keys loaded from `.env` file (local) or environment variables (cloud). Required: `GROQ_API_KEY` (or `OPENAI_API_KEY` if `TRANSCRIPTION_PROVIDER=openai`), `ANTHROPIC_API_KEY`.
+- For local work, check 1Password first. Missing local API keys are resolved from 1Password item `podcast-processor` in vault `Private` when `op` is installed. Use `.env` only as an explicit local override.
+- API keys loaded from `.env` file or 1Password (local), or environment variables (cloud). Required: `GROQ_API_KEY` (or `OPENAI_API_KEY` if `TRANSCRIPTION_PROVIDER=openai`), `ANTHROPIC_API_KEY`.
 - `GITHUB_TOKEN` / `FEEDS_GITHUB_TOKEN` needed for pushing feeds in cloud mode.
 - Articles are always generated in Dutch, regardless of source language.
