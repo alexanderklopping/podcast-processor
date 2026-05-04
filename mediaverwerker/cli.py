@@ -208,7 +208,11 @@ def cmd_clip(
     subtitles: bool = typer.Option(True, "--subtitles/--no-subtitles", help="Generate SRT subtitles"),
     burn: bool = typer.Option(False, "--burn", help="Burn subtitles into video"),
     language: str = typer.Option("nl", "--language", "-l", help="Language code"),
-    instart: bool = typer.Option(False, "--instart", help="Find a short pre-recorded insert (30-200s) instead of a full segment"),
+    instart: bool = typer.Option(
+        False,
+        "--instart",
+        help="Find a short pre-recorded insert (30-200s) instead of a full segment",
+    ),
 ):
     """Clip a segment from a video/audio file."""
     _init()
@@ -282,7 +286,7 @@ def cmd_eva(
         typer.echo(f"Error: {result['error']}")
         raise typer.Exit(1)
 
-    typer.echo(f"\nKlaar!")
+    typer.echo("\nKlaar!")
     if result.get("final_path"):
         typer.echo(f"  Video met ondertitels: {result['final_path']}")
     if result.get("srt_path"):

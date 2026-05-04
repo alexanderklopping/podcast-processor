@@ -20,6 +20,7 @@ from .state import (
     write_status_file,
 )
 from .tasks.article import create_article, save_article
+from .tasks.clip import burn_subtitles, clip_media, generate_srt
 from .tasks.download import (
     download_episode,
     download_url_audio,
@@ -33,7 +34,6 @@ from .tasks.feeds import (
     update_all_rss_feeds,
     update_individual_rss_feed,
 )
-from .tasks.clip import burn_subtitles, clip_media, generate_srt
 from .tasks.segment import find_eva_segment, find_segment
 from .tasks.transcribe import save_transcript, transcribe_audio
 from .util import retry_with_backoff, sanitize_filename
