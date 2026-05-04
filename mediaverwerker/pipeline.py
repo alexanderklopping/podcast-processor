@@ -1,6 +1,7 @@
 """Pipeline orchestration and parallel execution."""
 
 import logging
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -19,6 +20,7 @@ from .state import (
     write_status_file,
 )
 from .tasks.article import create_article, save_article
+from .tasks.clip import burn_subtitles, clip_media, generate_srt
 from .tasks.download import (
     download_episode,
     download_url_audio,
@@ -32,7 +34,7 @@ from .tasks.feeds import (
     update_all_rss_feeds,
     update_individual_rss_feed,
 )
-from .tasks.segment import find_segment
+from .tasks.segment import find_eva_segment, find_segment
 from .tasks.transcribe import save_transcript, transcribe_audio
 from .util import retry_with_backoff, sanitize_filename
 
@@ -292,6 +294,74 @@ def process_and_extract(podcast_name, date=None, topic=None, output_format="tran
         article = create_article(episode, transcript)
         save_article(episode, article)
         result["article"] = article
+
+    return result
+
+
+def process_eva_episode(video_path, output_dir=None, burn=True, no_subtitles=False):
+    """Process an Eva (NPO1) episode: find AI segment, clip, and subtitle.
+
+    Args:
+        video_path: Path to the downloaded Eva .mp4 file.
+        output_dir: Output directory (default: video's parent).
+        burn: Burn subtitles into video (default True).
+        no_subtitles: Skip subtitle generation entirely.
+
+    Returns:
+        dict with clip_path, srt_path, final_path, start, end, duration keys,
+        or dict with 'error' key on failure.
+    """
+    video_path = Path(video_path)
+    out_dir = Path(output_dir) if output_dir else video_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Derive output base name from DownloadGemist naming pattern
+    stem = video_path.stem
+    episode_match = re.search(r"Eva\s+(s\d+e\d+)", stem)
+    if episode_match:
+        base_name = f"Eva_{episode_match.group(1)}_AI_segment"
+    else:
+        base_name = f"{stem}_AI_segment"
+
+    clip_path = out_dir / f"{base_name}.mp4"
+    srt_path = out_dir / f"{base_name}.srt"
+    final_path = out_dir / f"{base_name}_ondertiteld.mp4"
+
+    # Step 1: Transcribe
+    logger.info(f"Eva pipeline: transcribing {video_path.name}")
+    transcript = transcribe_audio(video_path, language="nl", timestamps=True)
+    segments = transcript["segments"]
+
+    # Step 2: Find AI segment via keyword detection
+    segment = find_eva_segment(segments)
+    if not segment:
+        return {"error": "Geen AI-segment gevonden in de transcriptie"}
+
+    start, end = segment["start"], segment["end"]
+    logger.info(f"Eva AI segment: {start:.1f}s - {end:.1f}s ({end - start:.0f}s)")
+
+    # Step 3: Clip
+    clip_media(video_path, clip_path, start, end)
+
+    result = {
+        "clip_path": str(clip_path),
+        "start": start,
+        "end": end,
+        "duration": end - start,
+    }
+
+    if no_subtitles:
+        return result
+
+    # Step 4: Generate SRT
+    ai_segments = [s for s in segments if s["start"] >= start and s["end"] <= end + 5]
+    generate_srt(ai_segments, offset=start, srt_path=srt_path)
+    result["srt_path"] = str(srt_path)
+
+    # Step 5: Burn subtitles
+    if burn:
+        burn_subtitles(clip_path, srt_path, final_path)
+        result["final_path"] = str(final_path)
 
     return result
 
