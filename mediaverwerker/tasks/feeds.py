@@ -180,12 +180,49 @@ def extract_description_from_markdown(markdown_text):
     return ""
 
 
+def _published_articles_dir():
+    """Directory inside the feeds repo where generated article sources are kept."""
+    return FEEDS_DIR / "artikelen"
+
+
+def _article_markdown_files():
+    """Return article markdown files from local output and persisted feed sources."""
+    files_by_name = {}
+    for directory in (_published_articles_dir(), ARTICLES_DIR):
+        if not directory.exists():
+            continue
+        for md_file in directory.glob("*.md"):
+            files_by_name[md_file.name] = md_file
+    return list(files_by_name.values())
+
+
+def _persist_articles_to_feeds_repo():
+    """Copy generated article markdown into the feeds repo before publishing."""
+    if not ARTICLES_DIR.exists():
+        return []
+
+    published_articles_dir = _published_articles_dir()
+    published_articles_dir.mkdir(parents=True, exist_ok=True)
+
+    copied = []
+    for md_file in ARTICLES_DIR.glob("*.md"):
+        target = published_articles_dir / md_file.name
+        if target.exists() and target.read_bytes() == md_file.read_bytes():
+            continue
+        shutil.copy2(md_file, target)
+        copied.append(target)
+
+    if copied:
+        logger.info(f"Persisted {len(copied)} article markdown file(s) into feeds repo")
+    return copied
+
+
 def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None, description=None):
     """Generate an RSS feed for a specific podcast or logical collection."""
     logger.info(f"Generating RSS feed for: {podcast_name}")
 
     articles = []
-    all_md_files = list(ARTICLES_DIR.glob("*.md"))
+    all_md_files = _article_markdown_files()
     known_podcasts = [p["name"] for p in load_podcasts()]
     storage_key = feed_storage_key or podcast_name
     feed_filename = feed_filename or f"{podcast_name}.xml"
@@ -424,6 +461,7 @@ def push_feeds_to_github():
             if PROCESSED_FILE.exists():
                 shutil.copy(PROCESSED_FILE, FEEDS_DIR / "processed_episodes.json")
 
+        _persist_articles_to_feeds_repo()
         subprocess.run(["git", "add", "."], cwd=FEEDS_DIR, check=True, capture_output=True)
 
         result = subprocess.run(["git", "status", "--porcelain"], cwd=FEEDS_DIR, capture_output=True, text=True)

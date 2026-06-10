@@ -114,3 +114,66 @@ def test_generate_rss_feed_preserves_existing_feed_when_no_articles(tmp_path, mo
 
     assert generate_rss_feed("VSR") == existing_feed
     assert existing_feed.read_text(encoding="utf-8") == existing_xml
+
+
+def test_generate_rss_feed_uses_persisted_articles_from_feeds_repo(tmp_path, monkeypatch):
+    """A later run can rebuild the individual feed from persisted article markdown."""
+    from mediaverwerker.tasks import feeds
+
+    articles_dir = tmp_path / "articles"
+    feeds_dir = tmp_path / "feeds"
+    persisted_articles_dir = feeds_dir / "artikelen"
+    articles_dir.mkdir()
+    persisted_articles_dir.mkdir(parents=True)
+
+    (persisted_articles_dir / "2026-06-10_individuele-afleveringen_Test_Episode.md").write_text(
+        """<!--
+feed_storage_key: individuele-afleveringen
+source_url: https://example.com/episode
+podcast_name: Individual URL
+guid: test-guid
+-->
+
+# Persisted Individual Episode
+
+This article was generated from a manually submitted link.
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(feeds, "ARTICLES_DIR", articles_dir)
+    monkeypatch.setattr(feeds, "FEEDS_DIR", feeds_dir)
+    monkeypatch.setattr(feeds, "load_podcasts", lambda: [])
+
+    feed_path = generate_rss_feed(
+        "Individuele Afleveringen",
+        feed_storage_key="individuele-afleveringen",
+        feed_filename="individuele-afleveringen.xml",
+    )
+
+    feed_xml = feed_path.read_text(encoding="utf-8")
+    assert "<item>" in feed_xml
+    assert "Persisted Individual Episode" in feed_xml
+    assert "https://example.com/episode" in feed_xml
+
+
+def test_persist_articles_to_feeds_repo_copies_local_markdown(tmp_path, monkeypatch):
+    """Publishing a feed keeps article sources available for future rebuilds."""
+    from mediaverwerker.tasks import feeds
+
+    articles_dir = tmp_path / "articles"
+    feeds_dir = tmp_path / "feeds"
+    articles_dir.mkdir()
+    feeds_dir.mkdir()
+
+    article = articles_dir / "2026-06-10_individuele-afleveringen_Test_Episode.md"
+    article.write_text("# Test Episode\n\nGenerated article.", encoding="utf-8")
+
+    monkeypatch.setattr(feeds, "ARTICLES_DIR", articles_dir)
+    monkeypatch.setattr(feeds, "FEEDS_DIR", feeds_dir)
+
+    copied = feeds._persist_articles_to_feeds_repo()
+
+    persisted = feeds_dir / "artikelen" / article.name
+    assert copied == [persisted]
+    assert persisted.read_text(encoding="utf-8") == "# Test Episode\n\nGenerated article."
