@@ -314,7 +314,7 @@ def _score_article(client, transcript_text, article):
 Beoordeel dit artikel volgens de instructies. Antwoord ALLEEN in JSON."""
 
     try:
-        response = _call_claude(client, SCORE_ARTICLE_PROMPT, user_prompt, max_tokens=4000, thinking_budget=8000)
+        response = _call_claude(client, SCORE_ARTICLE_PROMPT, user_prompt, max_tokens=4000, thinking_budget=1024)
 
         # Strip markdown code blocks if present
         text = response.strip()
