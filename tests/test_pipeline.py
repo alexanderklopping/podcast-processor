@@ -1,7 +1,7 @@
 """Tests for podcast discovery pipeline behavior."""
 
-from click.exceptions import Exit
 import pytest
+import typer
 
 from mediaverwerker import cli, pipeline
 
@@ -83,7 +83,7 @@ def test_dispatch_actions_exits_when_individual_url_processing_fails(monkeypatch
         lambda **_kwargs: {"error": "metadata lookup failed"},
     )
 
-    with pytest.raises(Exit) as exc:
+    with pytest.raises(typer.Exit) as exc:
         cli._dispatch_actions(
             {
                 "actions": [
@@ -113,14 +113,26 @@ def test_process_individual_url_uses_youtube_captions_without_audio_download(mon
         "feed_storage_key": "individuele-afleveringen",
     }
 
-    monkeypatch.setattr(pipeline, "fetch_url_metadata", lambda _url, return_raw=False: (episode, {"extractor_key": "Youtube"}))
+    monkeypatch.setattr(
+        pipeline,
+        "fetch_url_metadata",
+        lambda _url, return_raw=False: (episode, {"extractor_key": "Youtube"}),
+    )
     monkeypatch.setattr(
         pipeline,
         "fetch_youtube_caption_transcript",
         lambda _metadata, _language: {"text": "caption transcript", "segments": []},
     )
-    monkeypatch.setattr(pipeline, "download_url_audio", lambda _url: pytest.fail("audio download should be skipped"))
-    monkeypatch.setattr(pipeline, "transcribe_audio", lambda *_args, **_kwargs: pytest.fail("transcription should be skipped"))
+    monkeypatch.setattr(
+        pipeline,
+        "download_url_audio",
+        lambda _url: pytest.fail("audio download should be skipped"),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "transcribe_audio",
+        lambda *_args, **_kwargs: pytest.fail("transcription should be skipped"),
+    )
     monkeypatch.setattr(pipeline, "load_processed_episodes", lambda: [])
     monkeypatch.setattr(pipeline, "save_transcript", lambda _episode, _transcript: "/tmp/transcript.txt")
     monkeypatch.setattr(pipeline, "create_article", lambda _episode, _transcript: "# Article")

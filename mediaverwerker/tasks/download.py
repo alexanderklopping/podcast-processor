@@ -333,13 +333,7 @@ def _text_caption_to_transcript(caption_text):
     lines = []
     for line in caption_text.splitlines():
         line = line.strip()
-        if (
-            not line
-            or line == "WEBVTT"
-            or line.isdigit()
-            or "-->" in line
-            or line.startswith(("Kind:", "Language:"))
-        ):
+        if not line or line == "WEBVTT" or line.isdigit() or "-->" in line or line.startswith(("Kind:", "Language:")):
             continue
         line = html.unescape(re.sub(r"<[^>]+>", "", line)).strip()
         if line:
