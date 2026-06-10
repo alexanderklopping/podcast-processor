@@ -61,6 +61,7 @@ def _dispatch_actions(parsed):
             )
             if result.get("error"):
                 typer.echo(f"Error: {result['error']}")
+                raise typer.Exit(1)
             elif result.get("already_processed"):
                 typer.echo(f"Al aanwezig in feed: {result.get('episode', {}).get('title', '?')}")
             else:

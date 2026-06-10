@@ -145,8 +145,11 @@ GITHUB_TOKEN = _first_nonempty(
 )
 YTDLP_COOKIES_FROM_BROWSER = _env_config.get("YTDLP_COOKIES_FROM_BROWSER") or os.getenv("YTDLP_COOKIES_FROM_BROWSER")
 YTDLP_COOKIES_FILE = _env_config.get("YTDLP_COOKIES_FILE") or os.getenv("YTDLP_COOKIES_FILE")
+YTDLP_COOKIES_B64 = _env_config.get("YTDLP_COOKIES_B64") or os.getenv("YTDLP_COOKIES_B64")
 YTDLP_IMPERSONATE = _env_config.get("YTDLP_IMPERSONATE") or os.getenv("YTDLP_IMPERSONATE")
+YTDLP_JS_RUNTIMES = _env_config.get("YTDLP_JS_RUNTIMES") or os.getenv("YTDLP_JS_RUNTIMES")
 YTDLP_REMOTE_COMPONENTS = _env_config.get("YTDLP_REMOTE_COMPONENTS") or os.getenv("YTDLP_REMOTE_COMPONENTS")
+YTDLP_EXTRACTOR_ARGS = _env_config.get("YTDLP_EXTRACTOR_ARGS") or os.getenv("YTDLP_EXTRACTOR_ARGS")
 GROQ_API_KEY = _resolve_secret("GROQ_API_KEY", use_1password=TRANSCRIPTION_PROVIDER == "groq")
 
 # Directories
