@@ -25,6 +25,7 @@ from .tasks.download import (
     download_episode,
     download_url_audio,
     fetch_url_metadata,
+    fetch_youtube_caption_transcript,
     search_podcast,
 )
 from .tasks.feeds import (
@@ -374,7 +375,7 @@ def process_individual_url(url, topic=None, output_format="article", output_dir=
 
     try:
         validate_url(url)
-        episode = fetch_url_metadata(url)
+        episode, url_metadata = fetch_url_metadata(url, return_raw=True)
         logger.info(f"Processing [individual URL]: {episode['title']}")
 
         if episode["guid"] in load_processed_episodes():
@@ -387,16 +388,20 @@ def process_individual_url(url, topic=None, output_format="article", output_dir=
                 result["feed_url"] = f"{FEEDS_BASE_URL}/{INDIVIDUAL_FEED_SLUG}.xml"
             return result
 
-        audio_path = download_url_audio(url)
         need_timestamps = topic is not None
-        transcript = transcribe_audio(audio_path, episode["language"], timestamps=need_timestamps)
+        transcript = fetch_youtube_caption_transcript(url_metadata, episode["language"])
+        audio_path = None
+        if transcript is None:
+            audio_path = download_url_audio(url)
+            transcript = transcribe_audio(audio_path, episode["language"], timestamps=need_timestamps)
         transcript_path = save_transcript(episode, transcript)
 
         result = {
             "episode": episode,
-            "audio_path": str(audio_path),
             "transcript_path": str(transcript_path),
         }
+        if audio_path is not None:
+            result["audio_path"] = str(audio_path)
 
         if topic and need_timestamps:
             segment = find_segment(transcript["segments"], topic)
@@ -418,8 +423,11 @@ def process_individual_url(url, topic=None, output_format="article", output_dir=
             out_dir = Path(output_dir).expanduser().resolve()
             out_dir.mkdir(parents=True, exist_ok=True)
 
-            dest_audio = out_dir / audio_path.name
-            shutil.copy2(audio_path, dest_audio)
+            output_files = []
+            if audio_path is not None:
+                dest_audio = out_dir / audio_path.name
+                shutil.copy2(audio_path, dest_audio)
+                output_files.append(str(dest_audio))
 
             text = transcript if isinstance(transcript, str) else transcript.get("text", "")
             dest_transcript = out_dir / f"{sanitize_filename(episode['title'])}_transcript.txt"
@@ -430,8 +438,9 @@ def process_individual_url(url, topic=None, output_format="article", output_dir=
                 f.write(f"URL: {episode['source_url']}\n\n---\n\n")
                 f.write(text)
 
+            output_files.append(str(dest_transcript))
             result["output_dir"] = str(out_dir)
-            result["output_files"] = [str(dest_audio), str(dest_transcript)]
+            result["output_files"] = output_files
             if article:
                 dest_article = out_dir / Path(result["article_path"]).name
                 shutil.copy2(result["article_path"], dest_article)

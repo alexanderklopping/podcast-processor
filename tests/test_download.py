@@ -1,0 +1,153 @@
+"""Tests for yt-dlp command construction."""
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from mediaverwerker.tasks import download
+
+
+def test_yt_dlp_cmd_includes_configured_js_runtime_and_remote_components(monkeypatch):
+    monkeypatch.setattr(download, "YTDLP_JS_RUNTIMES", "node", raising=False)
+    monkeypatch.setattr(download, "YTDLP_REMOTE_COMPONENTS", "ejs:github")
+    monkeypatch.setattr(download, "YTDLP_EXTRACTOR_ARGS", "youtube:player_skip=webpage;player_client=tv_embedded")
+    monkeypatch.setattr(download, "YTDLP_IMPERSONATE", None)
+    monkeypatch.setattr(download, "YTDLP_COOKIES_FROM_BROWSER", None)
+    monkeypatch.setattr(download, "YTDLP_COOKIES_FILE", None)
+
+    cmd = download._yt_dlp_cmd()
+
+    assert "--js-runtimes" in cmd
+    assert cmd[cmd.index("--js-runtimes") + 1] == "node"
+    assert "--remote-components" in cmd
+    assert cmd[cmd.index("--remote-components") + 1] == "ejs:github"
+    assert "--extractor-args" in cmd
+    assert cmd[cmd.index("--extractor-args") + 1] == "youtube:player_skip=webpage;player_client=tv_embedded"
+
+
+def test_yt_dlp_cmd_uses_cookie_secret_without_youtube_workaround(monkeypatch):
+    monkeypatch.setattr(download, "YTDLP_JS_RUNTIMES", "node", raising=False)
+    monkeypatch.setattr(download, "YTDLP_REMOTE_COMPONENTS", "ejs:github")
+    monkeypatch.setattr(download, "YTDLP_EXTRACTOR_ARGS", "youtube:player_skip=webpage;player_client=tv_embedded")
+    monkeypatch.setattr(download, "YTDLP_IMPERSONATE", None)
+    monkeypatch.setattr(download, "YTDLP_COOKIES_FROM_BROWSER", None)
+    monkeypatch.setattr(download, "YTDLP_COOKIES_FILE", None)
+    monkeypatch.setattr(download, "YTDLP_COOKIES_B64", "I05ldHNjYXBlIENvb2tpZSBGaWxlCg==")
+    monkeypatch.setattr(download, "_YTDLP_COOKIES_TEMP_FILE", None)
+
+    cmd = download._yt_dlp_cmd()
+
+    assert "--cookies" in cmd
+    cookies_path = Path(cmd[cmd.index("--cookies") + 1])
+    assert cookies_path.read_text(encoding="utf-8") == "#Netscape Cookie File\n"
+    assert "--extractor-args" not in cmd
+
+
+def test_run_yt_dlp_error_includes_stderr(monkeypatch):
+    def fake_run(_cmd, capture_output, text):
+        assert capture_output is True
+        assert text is True
+        return subprocess.CompletedProcess(
+            args=["yt-dlp"],
+            returncode=1,
+            stdout="",
+            stderr="ERROR: Sign in to confirm you are not a bot",
+        )
+
+    monkeypatch.setattr(download.subprocess, "run", fake_run)
+
+    with pytest.raises(download.YtDlpError) as exc:
+        download._run_yt_dlp(["yt-dlp", "--dump-single-json", "https://example.com/video"])
+
+    assert "Sign in to confirm" in str(exc.value)
+
+
+def test_fetch_url_metadata_allows_caption_only_youtube_metadata(monkeypatch):
+    calls = []
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=0,
+            stdout='{"id":"abc123","extractor_key":"Youtube","title":"A video","webpage_url":"https://youtube.com/watch?v=abc123"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(download, "_run_yt_dlp", fake_run)
+
+    episode, metadata = download.fetch_url_metadata("https://youtube.com/watch?v=abc123", return_raw=True)
+
+    assert "--ignore-no-formats-error" in calls[0]
+    assert episode["guid"] == "url:youtube:abc123"
+    assert metadata["title"] == "A video"
+
+
+def test_fetch_youtube_caption_transcript_uses_json3_track(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "events": [
+                    {"tStartMs": 1000, "dDurationMs": 2000, "segs": [{"utf8": "Hello"}, {"utf8": " world"}]},
+                    {"tStartMs": 3500, "dDurationMs": 1500, "segs": [{"utf8": "Stay hungry"}]},
+                ]
+            }
+
+    def fake_get(url, timeout, headers):
+        assert url == "https://example.com/captions.json3"
+        assert timeout == 60
+        assert headers["User-Agent"] == "Mozilla/5.0"
+        return FakeResponse()
+
+    monkeypatch.setattr(download.requests, "get", fake_get)
+
+    transcript = download.fetch_youtube_caption_transcript(
+        {
+            "extractor_key": "Youtube",
+            "subtitles": {},
+            "automatic_captions": {
+                "en": [{"ext": "json3", "url": "https://example.com/captions.json3"}],
+            },
+        },
+        "en",
+    )
+
+    assert transcript["text"] == "Hello world Stay hungry"
+    assert transcript["segments"][0] == {"start": 1.0, "end": 3.0, "text": "Hello world"}
+    assert transcript["source"] == "youtube_automatic_captions"
+
+
+def test_fetch_youtube_caption_transcript_can_parse_vtt_track(monkeypatch):
+    class FakeResponse:
+        text = """WEBVTT
+
+00:00:01.000 --> 00:00:03.000
+Hello <c>world</c>
+
+00:00:03.500 --> 00:00:05.000
+Stay hungry
+"""
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(download.requests, "get", lambda *_args, **_kwargs: FakeResponse())
+
+    transcript = download.fetch_youtube_caption_transcript(
+        {
+            "extractor_key": "Youtube",
+            "subtitles": {
+                "en": [{"ext": "vtt", "url": "https://example.com/captions.vtt"}],
+            },
+            "automatic_captions": {},
+        },
+        "en",
+    )
+
+    assert transcript["text"] == "Hello world Stay hungry"
+    assert transcript["segments"] == []
+    assert transcript["source"] == "youtube_subtitles"
