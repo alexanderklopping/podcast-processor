@@ -97,3 +97,15 @@ class TestOnePasswordFallback:
         assert "Missing required environment variables: GROQ_API_KEY, ANTHROPIC_API_KEY" in caplog.text
         assert "1Password CLI not found" in caplog.text
         assert "podcast-processor" in caplog.text
+
+    def test_transcription_upload_limit_stays_below_api_rejection_size(self, monkeypatch):
+        config, _calls = _reload_config(
+            monkeypatch,
+            env={
+                "GROQ_API_KEY": "env-groq",
+                "ANTHROPIC_API_KEY": "env-anthropic",
+                "TRANSCRIPTION_PROVIDER": "groq",
+            },
+        )
+
+        assert config.MAX_WHISPER_SIZE == 24 * 1024 * 1024

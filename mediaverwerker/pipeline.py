@@ -74,12 +74,12 @@ def fetch_rss_feed(url):
 
 
 def get_new_episodes_for_podcast(podcast):
-    """Fetch RSS feed and return new episodes for a single podcast (max 2)."""
+    """Fetch RSS feed and return the latest new episode for a single podcast."""
     feed = fetch_rss_feed(podcast["url"])
     processed = load_processed_episodes()
     new_episodes = []
 
-    for entry in feed.entries[:2]:
+    for entry in feed.entries[:1]:
         guid = _entry_guid(entry)
         if guid not in processed:
             audio_url = None

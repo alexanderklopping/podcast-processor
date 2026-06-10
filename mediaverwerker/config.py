@@ -161,8 +161,10 @@ FAILED_FILE = BASE_DIR / "failed_episodes.json"
 INDIVIDUAL_FEED_NAME = "Individuele Afleveringen"
 INDIVIDUAL_FEED_SLUG = "individuele-afleveringen"
 
-# Whisper API limits (Groq paid tier supports 100MB, OpenAI 25MB)
-MAX_WHISPER_SIZE = 100 * 1024 * 1024 if TRANSCRIPTION_PROVIDER == "groq" else 25 * 1024 * 1024
+# Keep uploads below the common 25MB transcription request limit.
+# Groq may advertise larger files on some tiers, but the API rejects the
+# current podcast MP3s around 35-40MB. Splitting early is safer and cheap.
+MAX_WHISPER_SIZE = 24 * 1024 * 1024
 
 # Retry defaults
 MAX_RETRIES = 3
