@@ -4,6 +4,7 @@ from mediaverwerker.tasks.feeds import (
     extract_description_from_markdown,
     extract_embedded_metadata,
     extract_title_from_markdown,
+    generate_rss_feed,
     markdown_to_html,
     strip_embedded_metadata,
 )
@@ -83,3 +84,33 @@ class TestMarkdownToHtml:
         html = markdown_to_html("Some text\n\nMore text")
         assert "<p>Some text</p>" in html
         assert "<p>More text</p>" in html
+
+
+def test_generate_rss_feed_preserves_existing_feed_when_no_articles(tmp_path, monkeypatch):
+    """Do not wipe a published feed just because this run processed another podcast."""
+    from mediaverwerker.tasks import feeds
+
+    articles_dir = tmp_path / "articles"
+    feeds_dir = tmp_path / "feeds"
+    articles_dir.mkdir()
+    feeds_dir.mkdir()
+
+    existing_feed = feeds_dir / "VSR.xml"
+    existing_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>VSR - Podcast Artikelen</title>
+    <item>
+      <title>Existing VSR episode</title>
+      <guid isPermaLink="false">existing-vsr</guid>
+    </item>
+  </channel>
+</rss>"""
+    existing_feed.write_text(existing_xml, encoding="utf-8")
+
+    monkeypatch.setattr(feeds, "ARTICLES_DIR", articles_dir)
+    monkeypatch.setattr(feeds, "FEEDS_DIR", feeds_dir)
+    monkeypatch.setattr(feeds, "load_podcasts", lambda: [{"name": "VSR"}])
+
+    assert generate_rss_feed("VSR") == existing_feed
+    assert existing_feed.read_text(encoding="utf-8") == existing_xml

@@ -231,6 +231,11 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
 
     articles.sort(key=lambda x: x["pub_date"], reverse=True)
 
+    feed_path = FEEDS_DIR / feed_filename
+    if not articles and feed_path.exists():
+        logger.info(f"No new articles for {podcast_name}; preserving existing RSS feed: {feed_path}")
+        return feed_path
+
     rss_items = []
     for article in articles:
         rfc822_date = article["pub_date"].strftime("%a, %d %b %Y %H:%M:%S +0000")
@@ -318,7 +323,6 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
         else:
             logger.error(f"Feed validation failed after {FEED_VALIDATION_MAX_RETRIES} attempts, saving anyway")
 
-    feed_path = FEEDS_DIR / feed_filename
     with open(feed_path, "w", encoding="utf-8") as f:
         f.write(feed)
 
