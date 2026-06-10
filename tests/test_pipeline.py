@@ -44,3 +44,30 @@ def test_get_new_episodes_limits_to_latest_per_podcast(monkeypatch):
     )
 
     assert [episode["title"] for episode in episodes] == ["Newest episode"]
+
+
+def test_batch_process_publishes_after_each_success(monkeypatch):
+    calls = []
+
+    def fake_process_episode(episode):
+        return episode["title"] != "Failed episode"
+
+    monkeypatch.setattr(pipeline, "process_episode", fake_process_episode)
+    monkeypatch.setattr(pipeline, "update_all_rss_feeds", lambda: calls.append("update"))
+    monkeypatch.setattr(pipeline, "push_feeds_to_github", lambda: calls.append("push"))
+
+    results = pipeline.batch_process(
+        [
+            {"title": "First success"},
+            {"title": "Failed episode"},
+            {"title": "Second success"},
+        ],
+        max_workers=1,
+    )
+
+    assert results == [
+        {"episode": "First success", "success": True},
+        {"episode": "Failed episode", "success": False},
+        {"episode": "Second success", "success": True},
+    ]
+    assert calls == ["update", "push", "update", "push"]

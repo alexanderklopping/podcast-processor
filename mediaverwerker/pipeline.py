@@ -683,11 +683,19 @@ def batch_process(episodes, max_workers=3):
             try:
                 success = future.result()
                 results.append({"episode": episode["title"], "success": success})
+                if success:
+                    publish_current_feeds()
             except Exception as e:
                 logger.error(f"Parallel processing error for {episode['title']}: {e}")
                 results.append({"episode": episode["title"], "success": False, "error": str(e)})
 
     return results
+
+
+def publish_current_feeds():
+    """Publish RSS feeds for episodes completed so far."""
+    update_all_rss_feeds()
+    push_feeds_to_github()
 
 
 def retry_failed_episodes():
@@ -767,6 +775,7 @@ def execute_pipeline_once():
             for episode in new_episodes:
                 if process_episode(episode):
                     success_count += 1
+                    publish_current_feeds()
                 else:
                     errors.append(f"Failed: {episode['title']}")
 
