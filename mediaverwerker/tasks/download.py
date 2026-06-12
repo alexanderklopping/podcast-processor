@@ -9,9 +9,12 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime
+from difflib import SequenceMatcher
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+import feedparser
 import requests
 
 from ..config import (
@@ -29,6 +32,8 @@ from ..util import retry_with_backoff, sanitize_filename
 
 logger = logging.getLogger("mediaverwerker")
 _YTDLP_COOKIES_TEMP_FILE = None
+SPOTIFY_OEMBED_URL = "https://open.spotify.com/oembed"
+SPOTIFY_EPISODE_RE = re.compile(r"(?:^|/)episode/([^/?#]+)")
 
 
 class YtDlpError(RuntimeError):
@@ -90,6 +95,7 @@ def _run_yt_dlp(cmd):
 
 def _metadata_to_episode(metadata, url):
     source_url = metadata.get("webpage_url") or metadata.get("original_url") or metadata.get("url") or url
+    audio_url = metadata.get("audio_url") or source_url
     extractor = (metadata.get("extractor_key") or metadata.get("extractor") or "url").lower()
     media_id = metadata.get("id")
     guid = f"url:{extractor}:{media_id}" if media_id else f"url:{source_url}"
@@ -122,13 +128,140 @@ def _metadata_to_episode(metadata, url):
         "guid": guid,
         "title": metadata.get("title") or media_id or "Untitled",
         "published": str(published),
-        "audio_url": source_url,
+        "audio_url": audio_url,
         "description": metadata.get("description") or "",
         "podcast_name": source_name,
         "language": language or "en",
         "source_type": "individual_url",
         "source_url": source_url,
         "feed_storage_key": INDIVIDUAL_FEED_SLUG,
+    }
+
+
+def _is_spotify_episode_url(url):
+    parsed = urlparse(url)
+    return parsed.netloc.endswith("open.spotify.com") and SPOTIFY_EPISODE_RE.search(parsed.path) is not None
+
+
+def _spotify_episode_id(url):
+    match = SPOTIFY_EPISODE_RE.search(urlparse(url).path)
+    return match.group(1) if match else None
+
+
+def _split_spotify_title(title):
+    """Split Spotify oEmbed title into episode title and podcast query."""
+    title = (title or "").strip()
+    for separator in (" - ", " – ", " — ", " | "):
+        if separator in title:
+            episode_title, podcast_name = title.rsplit(separator, 1)
+            return episode_title.strip(), podcast_name.strip()
+    return title, title
+
+
+def _normalize_match_text(value):
+    value = html.unescape(value or "").lower()
+    return re.sub(r"[^a-z0-9]+", " ", value).strip()
+
+
+def _title_match_score(target_title, candidate_title):
+    target = _normalize_match_text(target_title)
+    candidate = _normalize_match_text(candidate_title)
+    if not target or not candidate:
+        return 0.0
+    if target == candidate:
+        return 1.0
+    if target in candidate or candidate in target:
+        return 0.95
+    return SequenceMatcher(None, target, candidate).ratio()
+
+
+def _entry_get(entry, key, default=None):
+    if hasattr(entry, "get"):
+        return entry.get(key, default)
+    return getattr(entry, key, default)
+
+
+def _entry_audio_url(entry):
+    for enclosure in _entry_get(entry, "enclosures", []) or []:
+        href = enclosure.get("href") if hasattr(enclosure, "get") else getattr(enclosure, "href", None)
+        media_type = enclosure.get("type", "") if hasattr(enclosure, "get") else getattr(enclosure, "type", "")
+        if href and (not media_type or str(media_type).startswith("audio/")):
+            return href
+
+    for link in _entry_get(entry, "links", []) or []:
+        rel = link.get("rel") if hasattr(link, "get") else getattr(link, "rel", None)
+        href = link.get("href") if hasattr(link, "get") else getattr(link, "href", None)
+        media_type = link.get("type", "") if hasattr(link, "get") else getattr(link, "type", "")
+        if href and rel == "enclosure" and (not media_type or str(media_type).startswith("audio/")):
+            return href
+
+    return None
+
+
+def _entry_release_date(entry):
+    published = _entry_get(entry, "published") or _entry_get(entry, "updated") or ""
+    if not published:
+        return ""
+    try:
+        return parsedate_to_datetime(published).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        if re.match(r"^\d{4}-\d{2}-\d{2}", published):
+            return published[:10]
+        return published
+
+
+def _resolve_spotify_episode_metadata(url):
+    """Resolve a Spotify episode page to the original podcast RSS enclosure."""
+    episode_id = _spotify_episode_id(url)
+    if not episode_id:
+        raise YtDlpError("Spotify episode URL does not contain an episode id")
+
+    response = requests.get(
+        SPOTIFY_OEMBED_URL,
+        params={"url": url},
+        timeout=10,
+        headers={"User-Agent": "Mediaverwerker/1.0"},
+    )
+    response.raise_for_status()
+    episode_title, podcast_query = _split_spotify_title(response.json().get("title", ""))
+    if not episode_title:
+        raise YtDlpError("Spotify oEmbed did not return an episode title")
+
+    podcast = search_podcast(podcast_query) or search_podcast(episode_title)
+    if not podcast:
+        raise YtDlpError(f"Could not find original podcast feed for Spotify episode: {podcast_query}")
+
+    feed = feedparser.parse(podcast["url"])
+    if getattr(feed, "bozo", False):
+        logger.warning(f"Spotify resolver feed parsing issue: {feed.bozo_exception}")
+
+    best_entry = None
+    best_score = 0.0
+    for entry in getattr(feed, "entries", [])[:50]:
+        score = _title_match_score(episode_title, _entry_get(entry, "title", ""))
+        if score > best_score:
+            best_entry = entry
+            best_score = score
+
+    if best_entry is None or best_score < 0.72:
+        raise YtDlpError(f"Could not match Spotify episode title in podcast RSS feed: {episode_title}")
+
+    audio_url = _entry_audio_url(best_entry)
+    if not audio_url:
+        raise YtDlpError(f"Matched Spotify episode has no audio enclosure: {episode_title}")
+
+    return {
+        "id": episode_id,
+        "extractor_key": "SpotifyPodcast",
+        "title": _entry_get(best_entry, "title", episode_title),
+        "description": _entry_get(best_entry, "summary", "") or _entry_get(best_entry, "description", ""),
+        "channel": podcast.get("name") or podcast_query,
+        "language": podcast.get("language") or "en",
+        "release_date": _entry_release_date(best_entry),
+        "webpage_url": url,
+        "original_url": url,
+        "audio_url": audio_url,
+        "resolved_from": "spotify",
     }
 
 
@@ -258,17 +391,21 @@ def fetch_url_metadata(url, *, return_raw=False):
     """Fetch metadata for a single media URL via yt-dlp."""
     logger.info(f"Fetching URL metadata: {url}")
 
-    cmd = _yt_dlp_cmd() + [
-        "--dump-single-json",
-        "--no-download",
-        "--no-playlist",
-        "--ignore-no-formats-error",
-        "--quiet",
-        "--no-warnings",
-        url,
-    ]
-    result = _run_yt_dlp(cmd)
-    metadata = json.loads(result.stdout)
+    if _is_spotify_episode_url(url):
+        metadata = _resolve_spotify_episode_metadata(url)
+    else:
+        cmd = _yt_dlp_cmd() + [
+            "--dump-single-json",
+            "--no-download",
+            "--no-playlist",
+            "--ignore-no-formats-error",
+            "--quiet",
+            "--no-warnings",
+            url,
+        ]
+        result = _run_yt_dlp(cmd)
+        metadata = json.loads(result.stdout)
+
     episode = _metadata_to_episode(metadata, url)
     if return_raw:
         return episode, metadata

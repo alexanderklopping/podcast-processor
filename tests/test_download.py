@@ -8,6 +8,16 @@ import pytest
 from mediaverwerker.tasks import download
 
 
+class Entry(dict):
+    """Small feedparser-like entry for tests."""
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
 def test_yt_dlp_cmd_includes_configured_js_runtime_and_remote_components(monkeypatch):
     monkeypatch.setattr(download, "YTDLP_JS_RUNTIMES", "node", raising=False)
     monkeypatch.setattr(download, "YTDLP_REMOTE_COMPONENTS", "ejs:github")
@@ -82,6 +92,56 @@ def test_fetch_url_metadata_allows_caption_only_youtube_metadata(monkeypatch):
     assert "--ignore-no-formats-error" in calls[0]
     assert episode["guid"] == "url:youtube:abc123"
     assert metadata["title"] == "A video"
+
+
+def test_fetch_url_metadata_resolves_spotify_episode_to_original_feed_audio(monkeypatch):
+    spotify_url = "https://open.spotify.com/episode/spotify-episode-id?si=abc"
+
+    class FakeOembedResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"title": "NPR News: 06-10-2026 12PM EDT - NPR News Now"}
+
+    monkeypatch.setattr(
+        download.requests,
+        "get",
+        lambda url, **_kwargs: FakeOembedResponse() if url == "https://open.spotify.com/oembed" else None,
+    )
+    monkeypatch.setattr(
+        download,
+        "search_podcast",
+        lambda query: {"name": query, "url": "https://feeds.example.com/npr-news-now.xml", "language": "en"},
+    )
+    monkeypatch.setattr(
+        download.feedparser,
+        "parse",
+        lambda _url: type(
+            "Feed",
+            (),
+            {
+                "entries": [
+                    Entry(
+                        title="NPR News: 06-10-2026 12PM EDT",
+                        summary="Hourly news update.",
+                        published="Wed, 10 Jun 2026 16:11:33 +0000",
+                        enclosures=[{"type": "audio/mpeg", "href": "https://audio.example.com/npr-12pm.mp3"}],
+                    )
+                ],
+                "bozo": False,
+            },
+        )(),
+    )
+
+    episode, metadata = download.fetch_url_metadata(spotify_url, return_raw=True)
+
+    assert episode["guid"] == "url:spotifypodcast:spotify-episode-id"
+    assert episode["title"] == "NPR News: 06-10-2026 12PM EDT"
+    assert episode["podcast_name"] == "NPR News Now"
+    assert episode["source_url"] == spotify_url
+    assert episode["audio_url"] == "https://audio.example.com/npr-12pm.mp3"
+    assert metadata["resolved_from"] == "spotify"
 
 
 def test_fetch_youtube_caption_transcript_uses_json3_track(monkeypatch):
