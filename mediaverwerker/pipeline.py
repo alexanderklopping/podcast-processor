@@ -392,7 +392,7 @@ def process_individual_url(url, topic=None, output_format="article", output_dir=
         transcript = fetch_youtube_caption_transcript(url_metadata, episode["language"])
         audio_path = None
         if transcript is None:
-            audio_path = download_url_audio(url)
+            audio_path = download_url_audio(episode.get("audio_url") or url)
             transcript = transcribe_audio(audio_path, episode["language"], timestamps=need_timestamps)
         transcript_path = save_transcript(episode, transcript)
 
