@@ -190,7 +190,7 @@ def _call_claude(client, system_prompt, user_prompt, max_tokens=48000, thinking_
     """Call Claude with streaming and extended thinking."""
     article_parts = []
     with client.messages.stream(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=max_tokens,
         thinking={
             "type": "enabled",
