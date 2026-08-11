@@ -25,6 +25,7 @@ def test_get_new_episodes_limits_to_latest_per_podcast(monkeypatch):
                 Entry(
                     id="episode-1",
                     title="Newest episode",
+                    link="https://example.com/newest-episode",
                     published="2026-06-10",
                     summary="Latest",
                     enclosures=[{"type": "audio/mpeg", "href": "https://example.com/1.mp3"}],
@@ -47,6 +48,7 @@ def test_get_new_episodes_limits_to_latest_per_podcast(monkeypatch):
     )
 
     assert [episode["title"] for episode in episodes] == ["Newest episode"]
+    assert episodes[0]["source_url"] == "https://example.com/newest-episode"
 
 
 def test_batch_process_publishes_after_each_success(monkeypatch):

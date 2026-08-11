@@ -99,6 +99,7 @@ def get_new_episodes_for_podcast(podcast):
                         "description": entry.get("summary", ""),
                         "podcast_name": podcast["name"],
                         "language": podcast.get("language", "en"),
+                        "source_url": entry.get("link"),
                     }
                 )
 
@@ -185,6 +186,7 @@ def find_episode_by_name_and_date(podcast_name, date_str=None):
                 "description": entry.get("summary", ""),
                 "podcast_name": matched["name"],
                 "language": matched.get("language", "en"),
+                "source_url": entry.get("link"),
             }
 
     # If no date match, return the latest
@@ -206,6 +208,7 @@ def find_episode_by_name_and_date(podcast_name, date_str=None):
                 "description": entry.get("summary", ""),
                 "podcast_name": matched["name"],
                 "language": matched.get("language", "en"),
+                "source_url": entry.get("link"),
             }
 
     return None
@@ -735,6 +738,7 @@ def retry_failed_episodes():
             "podcast_name": info.get("podcast_name", "unknown"),
             "language": info.get("language", "en"),
             "feed_storage_key": info.get("feed_storage_key"),
+            "source_url": info.get("source_url"),
         }
         process_episode(episode)
 
