@@ -150,10 +150,15 @@ YTDLP_IMPERSONATE = _env_config.get("YTDLP_IMPERSONATE") or os.getenv("YTDLP_IMP
 YTDLP_JS_RUNTIMES = _env_config.get("YTDLP_JS_RUNTIMES") or os.getenv("YTDLP_JS_RUNTIMES")
 YTDLP_REMOTE_COMPONENTS = _env_config.get("YTDLP_REMOTE_COMPONENTS") or os.getenv("YTDLP_REMOTE_COMPONENTS")
 YTDLP_EXTRACTOR_ARGS = _env_config.get("YTDLP_EXTRACTOR_ARGS") or os.getenv("YTDLP_EXTRACTOR_ARGS")
+INSTAGRAM_COOKIES_B64 = _first_nonempty(
+    _env_config.get("INSTAGRAM_COOKIES_B64"),
+    os.getenv("INSTAGRAM_COOKIES_B64"),
+)
 GROQ_API_KEY = _resolve_secret("GROQ_API_KEY", use_1password=TRANSCRIPTION_PROVIDER == "groq")
 
 # Directories
 PODCASTS_FILE = BASE_DIR / "podcasts.json"
+INSTAGRAM_FEEDS_FILE = BASE_DIR / "instagram_feeds.json"
 AUDIO_DIR = BASE_DIR / "audio"
 TRANSCRIPTS_DIR = BASE_DIR / "transcripten"
 ARTICLES_DIR = BASE_DIR / "artikelen"
@@ -220,6 +225,21 @@ def validate_environment():
     except (subprocess.CalledProcessError, FileNotFoundError):
         logger.error("yt_dlp is not installed in the active Python environment")
         return False
+
+    if INSTAGRAM_FEEDS_FILE.exists():
+        try:
+            import json
+
+            instagram_feeds = json.loads(INSTAGRAM_FEEDS_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            logger.error(f"Invalid Instagram feeds configuration: {INSTAGRAM_FEEDS_FILE}")
+            return False
+        if instagram_feeds:
+            try:
+                subprocess.run([sys.executable, "-m", "gallery_dl", "--version"], capture_output=True, check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                logger.error("gallery_dl is not installed in the active Python environment")
+                return False
 
     logger.info("Environment validation passed")
     return True

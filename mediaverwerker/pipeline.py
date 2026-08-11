@@ -35,6 +35,7 @@ from .tasks.feeds import (
     update_all_rss_feeds,
     update_individual_rss_feed,
 )
+from .tasks.instagram import sync_instagram_feeds
 from .tasks.segment import find_eva_segment, find_segment
 from .tasks.transcribe import save_transcript, transcribe_audio
 from .util import retry_with_backoff, sanitize_filename
@@ -775,11 +776,9 @@ def execute_pipeline_once():
 
         new_episodes = get_all_new_episodes()
         if not new_episodes:
-            logger.info("No new episodes to process.")
-            write_status_file(0, 0, [])
-            return
-
-        if len(new_episodes) > 2:
+            logger.info("No new podcast episodes to process.")
+            success_count = 0
+        elif len(new_episodes) > 2:
             results = batch_process(new_episodes)
             success_count = sum(1 for r in results if r["success"])
             errors = [r["episode"] for r in results if not r["success"]]
@@ -792,13 +791,18 @@ def execute_pipeline_once():
                 else:
                     errors.append(f"Failed: {episode['title']}")
 
+        instagram_result = sync_instagram_feeds()
+        success_count += instagram_result["processed"]
+        errors.extend(instagram_result["errors"])
+        total_count = len(new_episodes) + instagram_result["processed"] + len(instagram_result["errors"])
+
         logger.info("=" * 60)
-        logger.info(f"Completed: {success_count}/{len(new_episodes)} episodes processed")
+        logger.info(f"Completed: {success_count}/{total_count} media items processed")
         logger.info("=" * 60)
 
         update_all_rss_feeds()
         push_feeds_to_github()
-        write_status_file(success_count, len(new_episodes), errors)
+        write_status_file(success_count, total_count, errors)
         return 1 if errors else 0
 
     except Exception as e:
