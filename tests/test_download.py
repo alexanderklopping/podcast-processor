@@ -73,6 +73,57 @@ def test_run_yt_dlp_error_includes_stderr(monkeypatch):
     assert "Sign in to confirm" in str(exc.value)
 
 
+def test_extract_substack_podcast_url_from_escaped_page_state():
+    page_html = (
+        r"{\"post\":{\"podcast_url\":"
+        r"\"https://api.substack.com/api/v1/audio/upload/audio-id/src\"}}"
+    )
+
+    assert (
+        download._extract_substack_podcast_url(page_html) == "https://api.substack.com/api/v1/audio/upload/audio-id/src"
+    )
+
+
+def test_substack_403_retries_via_publication_audio_endpoint(monkeypatch):
+    class FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    blocked = FakeResponse(403)
+    success = FakeResponse(200)
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return blocked if len(calls) == 1 else success
+
+    monkeypatch.setattr(download.requests, "get", fake_get)
+    monkeypatch.setattr(
+        download,
+        "_resolve_substack_audio_url",
+        lambda source_url: "https://www.dwarkesh.com/api/v1/audio/upload/audio-id/src",
+    )
+
+    response = download._download_response(
+        {
+            "audio_url": "https://api.substack.com/feed/podcast/123/audio.mp3",
+            "source_url": "https://www.dwarkesh.com/p/example",
+        }
+    )
+
+    assert response is success
+    assert blocked.closed is True
+    assert [call[0] for call in calls] == [
+        "https://api.substack.com/feed/podcast/123/audio.mp3",
+        "https://www.dwarkesh.com/api/v1/audio/upload/audio-id/src",
+    ]
+    assert calls[1][1]["headers"]["Referer"] == "https://www.dwarkesh.com/p/example"
+
+
 def test_fetch_url_metadata_allows_caption_only_youtube_metadata(monkeypatch):
     calls = []
 
