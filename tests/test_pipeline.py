@@ -76,6 +76,37 @@ def test_batch_process_publishes_after_each_success(monkeypatch):
     assert calls == ["update", "push", "update", "push"]
 
 
+def test_execute_pipeline_returns_failure_for_partial_batch(monkeypatch):
+    statuses = []
+    monkeypatch.setattr(pipeline, "init", lambda: None)
+    monkeypatch.setattr(pipeline, "validate_environment", lambda: True)
+    monkeypatch.setattr(pipeline, "IS_CLOUD", False)
+    monkeypatch.setattr(pipeline, "retry_failed_episodes", lambda: None)
+    monkeypatch.setattr(
+        pipeline,
+        "get_all_new_episodes",
+        lambda: [{"title": "Success"}, {"title": "Failure"}],
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "process_episode",
+        lambda episode: episode["title"] == "Success",
+    )
+    monkeypatch.setattr(pipeline, "publish_current_feeds", lambda: None)
+    monkeypatch.setattr(pipeline, "update_all_rss_feeds", lambda: None)
+    monkeypatch.setattr(pipeline, "push_feeds_to_github", lambda: None)
+    monkeypatch.setattr(
+        pipeline,
+        "write_status_file",
+        lambda success, total, errors: statuses.append((success, total, errors)),
+    )
+
+    exit_code = pipeline.execute_pipeline_once()
+
+    assert exit_code == 1
+    assert statuses == [(1, 2, ["Failed: Failure"])]
+
+
 def test_dispatch_actions_exits_when_individual_url_processing_fails(monkeypatch):
     monkeypatch.setattr(
         cli,
