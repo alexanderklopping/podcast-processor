@@ -135,9 +135,26 @@ TRANSCRIPTION_PROVIDER = _first_nonempty(
 
 OPENAI_API_KEY = _resolve_secret(
     "OPENAI_API_KEY",
-    use_1password=TRANSCRIPTION_PROVIDER == "openai",
+    use_1password=True,
 )
-ANTHROPIC_API_KEY = _resolve_secret("ANTHROPIC_API_KEY")
+OPENAI_MODEL_BULK = _first_nonempty(_env_config.get("OPENAI_MODEL_BULK"), os.getenv("OPENAI_MODEL_BULK"), "gpt-5-nano")
+OPENAI_MODEL_STRUCTURED = _first_nonempty(
+    _env_config.get("OPENAI_MODEL_STRUCTURED"), os.getenv("OPENAI_MODEL_STRUCTURED"), "gpt-5.4-nano"
+)
+OPENAI_MODEL_POLISH = _first_nonempty(
+    _env_config.get("OPENAI_MODEL_POLISH"), os.getenv("OPENAI_MODEL_POLISH"), "gpt-5.6-luna"
+)
+OPENAI_MODEL_EDITORIAL = _first_nonempty(
+    _env_config.get("OPENAI_MODEL_EDITORIAL"), os.getenv("OPENAI_MODEL_EDITORIAL"), "gpt-5.6-terra"
+)
+GROQ_TRANSCRIPTION_MODEL = _first_nonempty(
+    _env_config.get("GROQ_TRANSCRIPTION_MODEL"),
+    os.getenv("GROQ_TRANSCRIPTION_MODEL"),
+    "whisper-large-v3-turbo",
+)
+OPENAI_TRANSCRIPTION_MODEL = _first_nonempty(
+    _env_config.get("OPENAI_TRANSCRIPTION_MODEL"), os.getenv("OPENAI_TRANSCRIPTION_MODEL"), "whisper-1"
+)
 GITHUB_TOKEN = _first_nonempty(
     _env_config.get("GITHUB_TOKEN"),
     os.getenv("GITHUB_TOKEN"),
@@ -196,8 +213,8 @@ def validate_environment():
         missing.append("GROQ_API_KEY")
     if TRANSCRIPTION_PROVIDER == "openai" and not OPENAI_API_KEY:
         missing.append("OPENAI_API_KEY")
-    if not ANTHROPIC_API_KEY:
-        missing.append("ANTHROPIC_API_KEY")
+    if not OPENAI_API_KEY and "OPENAI_API_KEY" not in missing:
+        missing.append("OPENAI_API_KEY")
 
     if missing:
         logger.error(f"Missing required environment variables: {', '.join(missing)}")

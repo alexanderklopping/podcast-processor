@@ -1,16 +1,25 @@
-"""Topic-based segment finding via Claude API."""
+"""Topic-based segment finding via shared structured model routing."""
 
 import json
 import logging
-import re
 
-from anthropic import Anthropic
-
-from ..config import ANTHROPIC_API_KEY
+from ..ai import generate_json
 
 logger = logging.getLogger("mediaverwerker")
 
 SEGMENT_MAX_RETRIES = 5  # Max API calls total (initial + retries)
+
+SEGMENT_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "start_index": {"type": ["integer", "null"]},
+        "end_index": {"type": ["integer", "null"]},
+        "confidence": {"type": "number"},
+        "alternative_queries": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["start_index", "end_index", "confidence", "alternative_queries"],
+    "additionalProperties": False,
+}
 
 # Duration constraints per segment type
 DURATION_LIMITS = {
@@ -19,27 +28,10 @@ DURATION_LIMITS = {
 }
 
 
-def _parse_json_response(text):
-    """Extract JSON from a response that may contain markdown or explanation text."""
-    text = text.strip()
-    # Strip markdown code blocks
-    if "```" in text:
-        lines = text.split("\n")
-        lines = [line for line in lines if not line.strip().startswith("```")]
-        text = "\n".join(lines).strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r'\{[^{}]*"start_index"[^{}]*\}', text)
-        if match:
-            return json.loads(match.group())
-        return None
-
-
 def find_segment(transcript_segments, topic, margin=5.0, segment_type="segment"):
     """Find the segment of a transcript that discusses a specific topic.
 
-    Uses Claude to find the segment, with duration validation and retry with feedback.
+    Uses a structured model to find the segment, with duration validation and retry feedback.
 
     Args:
         transcript_segments: List of dicts with 'start', 'end', 'text' keys.
@@ -81,28 +73,19 @@ Return ONLY this JSON (no markdown, no explanation):
 
 If no match: {{"start_index": null, "end_index": null, "confidence": 0.0, "alternative_queries": ["alt1", "alt2"]}}"""
 
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
-    messages = [{"role": "user", "content": f"Topic: {topic}\n\nTranscript:\n{transcript_text}"}]
+    input_text = f"Topic: {topic}\n\nTranscript:\n{transcript_text}"
 
     for attempt in range(SEGMENT_MAX_RETRIES):
         logger.info(f"Segment search attempt {attempt + 1}/{SEGMENT_MAX_RETRIES}")
 
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            system=system_prompt,
-            messages=messages,
+        result = generate_json(
+            task="segment_selection",
+            instructions=system_prompt,
+            input_text=input_text,
+            schema=SEGMENT_RESPONSE_SCHEMA,
+            max_output_tokens=1024,
         )
-
-        response_text = response.content[0].text.strip()
-        result = _parse_json_response(response_text)
-
-        if result is None:
-            logger.error(f"Failed to parse response: {response_text[:200]}")
-            # Add feedback to conversation and retry
-            messages.append({"role": "assistant", "content": response_text})
-            messages.append({"role": "user", "content": "That was not valid JSON. Return ONLY a JSON object."})
-            continue
+        response_text = json.dumps(result)
 
         start_idx = result.get("start_index")
         end_idx = result.get("end_index")
@@ -114,7 +97,7 @@ If no match: {{"start_index": null, "end_index": null, "confidence": 0.0, "alter
             if alternatives and attempt < SEGMENT_MAX_RETRIES - 1:
                 alt = alternatives[0]
                 logger.info(f"Not found, trying alternative: '{alt}'")
-                messages = [{"role": "user", "content": f"Topic: {alt}\n\nTranscript:\n{transcript_text}"}]
+                input_text = f"Topic: {alt}\n\nTranscript:\n{transcript_text}"
                 continue
             logger.info(f"Topic '{topic}' not found after {attempt + 1} attempts")
             return None
@@ -130,30 +113,20 @@ If no match: {{"start_index": null, "end_index": null, "confidence": 0.0, "alter
         # Duration validation
         if duration > max_dur and attempt < SEGMENT_MAX_RETRIES - 1:
             logger.warning(f"{segment_type} too long ({duration:.0f}s > {max_dur}s), asking to narrow")
-            messages.append({"role": "assistant", "content": response_text})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        f"Your selection is {duration:.0f} seconds ({duration / 60:.1f} min), "
-                        f"but a {segment_type} should be {min_dur}-{max_dur} seconds. "
-                        f"Please narrow your selection. Return only JSON."
-                    ),
-                }
+            input_text += (
+                f"\n\nPrevious selection: {response_text}\n"
+                f"That selection is {duration:.0f} seconds ({duration / 60:.1f} min), "
+                f"but a {segment_type} should be {min_dur}-{max_dur} seconds. "
+                "Narrow the selection."
             )
             continue
         elif duration < min_dur and attempt < SEGMENT_MAX_RETRIES - 1:
             logger.warning(f"{segment_type} too short ({duration:.0f}s < {min_dur}s), asking to widen")
-            messages.append({"role": "assistant", "content": response_text})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        f"Your selection is only {duration:.0f} seconds, "
-                        f"but a {segment_type} should be {min_dur}-{max_dur} seconds. "
-                        f"Please widen your selection. Return only JSON."
-                    ),
-                }
+            input_text += (
+                f"\n\nPrevious selection: {response_text}\n"
+                f"That selection is only {duration:.0f} seconds, "
+                f"but a {segment_type} should be {min_dur}-{max_dur} seconds. "
+                "Widen the selection."
             )
             continue
 
@@ -178,7 +151,7 @@ If no match: {{"start_index": null, "end_index": null, "confidence": 0.0, "alter
 def find_eva_segment(segments, margin=5.0):
     """Find the tech/AI segment (Alexander Klöpping) in an Eva (NPO1) episode.
 
-    Uses Claude to identify the recurring tech segment. More robust than keyword matching
+    Uses semantic model routing to identify the recurring tech segment. More robust than keyword matching
     because the segment topic varies per episode (AI, self-driving cars, crypto, etc.).
 
     Args:

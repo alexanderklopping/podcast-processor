@@ -3,14 +3,15 @@
 import logging
 import time
 
-from anthropic import Anthropic
 from openai import OpenAI
 
+from ..ai import generate_json, generate_text
 from ..config import (
-    ANTHROPIC_API_KEY,
     GROQ_API_KEY,
+    GROQ_TRANSCRIPTION_MODEL,
     MAX_WHISPER_SIZE,
     OPENAI_API_KEY,
+    OPENAI_TRANSCRIPTION_MODEL,
     TRANSCRIPTION_PROVIDER,
     TRANSCRIPTS_DIR,
 )
@@ -61,6 +62,27 @@ Antwoord ALLEEN in JSON:
   "problemen": ["probleem 1", "probleem 2"]
 }"""
 
+CLEANUP_SCORE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "scores": {
+            "type": "object",
+            "properties": {
+                "eigennamen": {"type": "number"},
+                "vloeiendheid": {"type": "number"},
+                "schoonheid": {"type": "number"},
+                "volledigheid": {"type": "number"},
+            },
+            "required": ["eigennamen", "vloeiendheid", "schoonheid", "volledigheid"],
+            "additionalProperties": False,
+        },
+        "gemiddelde": {"type": "number"},
+        "problemen": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["scores", "gemiddelde", "problemen"],
+    "additionalProperties": False,
+}
+
 
 def _cleanup_transcript(text):
     """Run iterative cleanup loop on raw transcript text.
@@ -78,20 +100,19 @@ def _cleanup_transcript(text):
         logger.info(f"Transcript too large for cleanup ({len(text):,} chars), skipping")
         return text
 
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
-
     current = text
     for iteration in range(TRANSCRIPT_CLEANUP_MAX_ITERATIONS):
         logger.info(f"Transcript cleanup iteration {iteration + 1}/{TRANSCRIPT_CLEANUP_MAX_ITERATIONS}")
 
         # Cleanup pass
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=16000,
-            system=CLEANUP_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": current}],
+        cleaned = generate_text(
+            task="transcript_cleanup",
+            role="polish",
+            instructions=CLEANUP_SYSTEM_PROMPT,
+            input_text=current,
+            max_output_tokens=16000,
+            reasoning_effort="none",
         )
-        cleaned = message.content[0].text.strip()
 
         # Sanity check: cleaned version shouldn't lose more than 20% of content
         if len(cleaned.split()) < word_count * 0.7:
@@ -101,27 +122,15 @@ def _cleanup_transcript(text):
             return current
 
         # Score pass
-        score_message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            system=CLEANUP_SCORE_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"**ORIGINEEL:**\n{text[:5000]}\n\n**OPGESCHOOND:**\n{cleaned[:5000]}",
-                }
-            ],
+        score_result = generate_json(
+            task="transcript_cleanup_score",
+            instructions=CLEANUP_SCORE_PROMPT,
+            input_text=f"**ORIGINEEL:**\n{text[:5000]}\n\n**OPGESCHOOND:**\n{cleaned[:5000]}",
+            schema=CLEANUP_SCORE_SCHEMA,
+            max_output_tokens=1024,
         )
 
         try:
-            import json
-
-            score_text = score_message.content[0].text.strip()
-            if score_text.startswith("```"):
-                lines = score_text.split("\n")
-                lines = [line for line in lines if not line.strip().startswith("```")]
-                score_text = "\n".join(lines).strip()
-            score_result = json.loads(score_text)
             scores = score_result.get("scores", {})
             avg = score_result.get("gemiddelde", 0)
             if not avg:
@@ -138,7 +147,7 @@ def _cleanup_transcript(text):
             # Feed problems back into the next iteration
             current = cleaned
 
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
+        except (KeyError, TypeError) as e:
             logger.warning(f"Failed to parse cleanup score: {e}")
             return cleaned
 
@@ -148,13 +157,13 @@ def _cleanup_transcript(text):
 def _get_transcription_client():
     """Return (client, model) based on configured provider."""
     if TRANSCRIPTION_PROVIDER == "groq":
-        logger.info("Using Groq for transcription (whisper-large-v3-turbo)")
+        logger.info(f"Using Groq for transcription ({GROQ_TRANSCRIPTION_MODEL})")
         return (
             OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY),
-            "whisper-large-v3-turbo",
+            GROQ_TRANSCRIPTION_MODEL,
         )
-    logger.info("Using OpenAI for transcription (whisper-1)")
-    return OpenAI(api_key=OPENAI_API_KEY), "whisper-1"
+    logger.info(f"Using OpenAI for transcription ({OPENAI_TRANSCRIPTION_MODEL})")
+    return OpenAI(api_key=OPENAI_API_KEY), OPENAI_TRANSCRIPTION_MODEL
 
 
 @retry_with_backoff(max_retries=3, delay=5)
