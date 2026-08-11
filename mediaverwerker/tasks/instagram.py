@@ -349,13 +349,36 @@ def _record_cookie_error(profiles, status, message):
     return {"processed": 0, "errors": errors}
 
 
+def _cleanup_unsubscribed_profiles(profiles, status):
+    configured = {profile["username"].lower() for profile in profiles}
+    changed = False
+
+    for username in list(status):
+        if username.lower() in configured:
+            continue
+        filename = status[username].get("feedFilename") or f"instagram-{username.lower()}.xml"
+        (FEEDS_DIR / filename).unlink(missing_ok=True)
+        del status[username]
+        changed = True
+
+    for feed_path in FEEDS_DIR.glob("instagram-*.xml"):
+        username = feed_path.stem.removeprefix("instagram-").lower()
+        if username not in configured:
+            feed_path.unlink()
+            changed = True
+
+    if changed:
+        save_instagram_status(status)
+
+
 def sync_instagram_feeds():
     """Process the initial latest video and all subsequently discovered videos."""
     profiles = load_instagram_feeds()
+    status = load_instagram_status()
+    _cleanup_unsubscribed_profiles(profiles, status)
     if not profiles:
         return {"processed": 0, "errors": []}
 
-    status = load_instagram_status()
     processed_count = 0
     errors = []
     try:

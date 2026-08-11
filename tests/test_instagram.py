@@ -219,6 +219,25 @@ def test_missing_cookie_secret_sets_error_for_each_profile(monkeypatch, tmp_path
     assert status[PROFILE["username"]]["error"] == "INSTAGRAM_COOKIES_B64 is not configured"
 
 
+def test_unsubscribed_profile_removes_feed_and_status_without_cookies(monkeypatch, tmp_path):
+    output_dir, *_ = configure_paths(monkeypatch, tmp_path)
+    instagram.INSTAGRAM_FEEDS_FILE.write_text("[]\n", encoding="utf-8")
+    feed_path = output_dir / "instagram-yuanunpackschina.xml"
+    feed_path.write_text("old feed", encoding="utf-8")
+    status_path = output_dir / "instagram_status.json"
+    status_path.write_text(
+        json.dumps({PROFILE["username"]: {"feedFilename": feed_path.name}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(instagram, "INSTAGRAM_COOKIES_B64", None)
+
+    result = instagram.sync_instagram_feeds()
+
+    assert result == {"processed": 0, "errors": []}
+    assert not feed_path.exists()
+    assert json.loads(status_path.read_text(encoding="utf-8")) == {}
+
+
 def test_discovery_failure_sets_visible_status_and_preserves_existing_feed(monkeypatch, tmp_path):
     output_dir, *_ = configure_paths(monkeypatch, tmp_path)
     feed_path = output_dir / "instagram-yuanunpackschina.xml"
