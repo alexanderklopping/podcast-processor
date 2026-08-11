@@ -2,7 +2,7 @@ name: Process Podcasts
 
 on:
   schedule:
-    - cron: '0 7 * * *'  # 09:00 CET (07:00 UTC)
+    - cron: '0 1 * * *'  # 02:00 CET / 03:00 CEST
   workflow_dispatch:
 
 concurrency:
@@ -40,6 +40,8 @@ jobs:
           fi
 
       - name: Run mediaverwerker
+        id: mediaverwerker
+        continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -49,11 +51,19 @@ jobs:
         run: mediaverwerker process
 
       - name: Push feeds to GitHub Pages
+        if: always()
         run: |
           cd feeds
           cp ../processed_episodes.json . 2>/dev/null || true
+          cp ../status.json . 2>/dev/null || true
           git config user.email "mediaverwerker@github.com"
           git config user.name "Mediaverwerker"
           git add .
           git diff --cached --quiet || git commit -m "Update feeds - $(date '+%Y-%m-%d %H:%M')"
           git push
+
+      - name: Fail incomplete processing
+        if: steps.mediaverwerker.outcome == 'failure'
+        run: |
+          echo "Mediaverwerker reported incomplete processing; status.json was published for monitoring."
+          exit 1
