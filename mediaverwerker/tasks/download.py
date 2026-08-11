@@ -12,7 +12,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import feedparser
 import requests
@@ -28,12 +28,14 @@ from ..config import (
     YTDLP_JS_RUNTIMES,
     YTDLP_REMOTE_COMPONENTS,
 )
-from ..util import retry_with_backoff, sanitize_filename
+from ..util import retry_with_backoff, sanitize_filename, validate_url
 
 logger = logging.getLogger("mediaverwerker")
 _YTDLP_COOKIES_TEMP_FILE = None
 SPOTIFY_OEMBED_URL = "https://open.spotify.com/oembed"
 SPOTIFY_EPISODE_RE = re.compile(r"(?:^|/)episode/([^/?#]+)")
+SUBSTACK_AUDIO_HOST = "api.substack.com"
+SUBSTACK_FEED_AUDIO_RE = re.compile(r"^/feed/podcast/\d+/[^/]+\.mp3$")
 
 
 class YtDlpError(RuntimeError):
@@ -91,6 +93,90 @@ def _run_yt_dlp(cmd):
     if not details:
         details = f"yt-dlp exited with status {result.returncode}"
     raise YtDlpError(details)
+
+
+def _is_substack_feed_audio_url(url):
+    parsed = urlparse(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == SUBSTACK_AUDIO_HOST
+        and bool(SUBSTACK_FEED_AUDIO_RE.match(parsed.path))
+    )
+
+
+def _extract_substack_podcast_url(page_html):
+    patterns = (
+        r'\\"podcast_url\\":\\"((?:\\\\.|[^"\\])+)\\"',
+        r'"podcast_url"\s*:\s*"((?:\\.|[^"\\])+)"',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, page_html)
+        if not match:
+            continue
+        try:
+            value = json.loads(f'"{match.group(1)}"')
+        except json.JSONDecodeError:
+            continue
+        parsed = urlparse(value)
+        if (
+            parsed.scheme == "https"
+            and parsed.netloc == SUBSTACK_AUDIO_HOST
+            and parsed.path.startswith("/api/v1/audio/upload/")
+        ):
+            return value
+    return None
+
+
+def _resolve_substack_audio_url(source_url):
+    """Resolve a blocked Substack feed enclosure through its public post page."""
+    parsed_source = urlparse(source_url or "")
+    if parsed_source.scheme != "https" or not parsed_source.netloc:
+        return None
+    validate_url(source_url)
+
+    response = requests.get(
+        source_url,
+        timeout=30,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
+    response.raise_for_status()
+    podcast_url = _extract_substack_podcast_url(response.text)
+    if not podcast_url:
+        return None
+
+    parsed_audio = urlparse(podcast_url)
+    fallback_url = urlunparse(parsed_audio._replace(netloc=parsed_source.netloc))
+    validate_url(fallback_url)
+    return fallback_url
+
+
+def _download_response(episode):
+    audio_url = episode["audio_url"]
+    source_url = episode.get("source_url")
+    headers = {
+        "User-Agent": "Mediaverwerker/1.0",
+        "Accept": "audio/mpeg,audio/*;q=0.9,*/*;q=0.8",
+    }
+    if source_url:
+        headers["Referer"] = source_url
+
+    response = requests.get(audio_url, stream=True, timeout=300, headers=headers)
+    if response.status_code != 403 or not source_url or not _is_substack_feed_audio_url(audio_url):
+        return response
+
+    fallback_url = _resolve_substack_audio_url(source_url)
+    if not fallback_url:
+        return response
+
+    response.close()
+    logger.info("Substack feed enclosure returned 403; retrying via the publication audio endpoint")
+    return requests.get(fallback_url, stream=True, timeout=300, headers=headers)
 
 
 def _metadata_to_episode(metadata, url):
@@ -323,9 +409,7 @@ def download_episode(episode):
 
     logger.info(f"Downloading: {episode['title']}")
 
-    response = requests.get(
-        episode["audio_url"], stream=True, timeout=300, headers={"User-Agent": "Mediaverwerker/1.0"}
-    )
+    response = _download_response(episode)
     response.raise_for_status()
 
     expected_size = int(response.headers.get("content-length", 0))
