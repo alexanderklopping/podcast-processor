@@ -77,6 +77,21 @@ def test_generate_json_uses_structured_role_and_logs_usage(monkeypatch, caplog):
     assert '"input_tokens":12' in caplog.text
 
 
+def test_generate_json_mentions_json_in_input_for_json_object_mode(monkeypatch):
+    responses = FakeResponses()
+    monkeypatch.setattr(ai, "_client", lambda: SimpleNamespace(responses=responses))
+
+    result = ai.generate_json(
+        task="command_parsing",
+        instructions="Parse the command into a structured response.",
+        input_text="USER:\nverwerk alle nieuwe afleveringen",
+    )
+
+    assert result == {"ok": True}
+    assert responses.request["text"]["format"] == {"type": "json_object"}
+    assert responses.request["input"].startswith("Return valid JSON.")
+
+
 def test_model_for_rejects_unknown_role():
     with pytest.raises(ValueError, match="Unknown AI role"):
         ai.model_for("unknown")

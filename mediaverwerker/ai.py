@@ -158,6 +158,10 @@ def generate_json(
             }
         else:
             options["text"] = {"format": {"type": "json_object"}}
+            # The Responses API requires the input itself to mention JSON when
+            # json_object mode is used. Instructions alone do not satisfy that
+            # validation rule.
+            options["input"] = f"Return valid JSON.\n\n{input_text}"
         response = _client().responses.create(**options)
         result = json.loads(response.output_text)
         _log_result(task, role, model, started_at, response=response)
