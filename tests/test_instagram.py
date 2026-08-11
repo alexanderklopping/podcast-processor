@@ -82,7 +82,12 @@ def test_discover_profile_groups_carousel_files_and_ignores_images(monkeypatch, 
             ],
         ]
     )
-    monkeypatch.setattr(instagram, "_run_gallery_dl", lambda _args: output)
+    gallery_dl_args = []
+    monkeypatch.setattr(
+        instagram,
+        "_run_gallery_dl",
+        lambda args: gallery_dl_args.extend(args) or output,
+    )
 
     result = instagram.discover_profile(PROFILE, tmp_path / "cookies.txt")
 
@@ -91,6 +96,7 @@ def test_discover_profile_groups_carousel_files_and_ignores_images(monkeypatch, 
     assert result["posts"][0]["permalink"] == "https://www.instagram.com/reel/NEWEST/"
     assert result["posts"][0]["hasVideo"] is True
     assert result["posts"][1]["hasVideo"] is False
+    assert gallery_dl_args[-1] == "https://www.instagram.com/yuanunpackschina/posts/"
 
 
 def test_first_run_processes_latest_video_once_and_baselines_older_posts(monkeypatch, tmp_path):

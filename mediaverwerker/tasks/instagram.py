@@ -175,7 +175,8 @@ def discover_profile(profile, cookies_path):
     if not match or match.group(1).lower() != profile["username"].lower():
         raise InstagramError(f"Invalid canonical Instagram profile URL: {url}")
 
-    output = _run_gallery_dl(_gallery_dl_base(cookies_path) + ["--dump-json", url])
+    discovery_url = f"{url}posts/"
+    output = _run_gallery_dl(_gallery_dl_base(cookies_path) + ["--dump-json", discovery_url])
     grouped = {}
     display_name = None
     for metadata in _json_objects(output):
