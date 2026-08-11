@@ -1,12 +1,10 @@
-"""Article generation via Claude API."""
+"""Podcast article generation via shared OpenAI model routing."""
 
-import json
 import logging
 from datetime import datetime
 
-from anthropic import Anthropic
-
-from ..config import ANTHROPIC_API_KEY, ARTICLES_DIR
+from ..ai import generate_json, generate_text
+from ..config import ARTICLES_DIR
 from ..util import retry_with_backoff, sanitize_filename
 
 logger = logging.getLogger("mediaverwerker")
@@ -163,6 +161,40 @@ Antwoord ALLEEN in dit JSON-formaat:
   ]
 }"""
 
+ARTICLE_SCORE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "scores": {
+            "type": "object",
+            "properties": {
+                "volledigheid": {"type": "number"},
+                "nederlands": {"type": "number"},
+                "narratief": {"type": "number"},
+                "citaten": {"type": "number"},
+                "leesbaarheid": {"type": "number"},
+            },
+            "required": ["volledigheid", "nederlands", "narratief", "citaten", "leesbaarheid"],
+            "additionalProperties": False,
+        },
+        "gemiddelde": {"type": "number"},
+        "feedback": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "dimensie": {"type": "string"},
+                    "probleem": {"type": "string"},
+                    "suggestie": {"type": "string"},
+                },
+                "required": ["dimensie", "probleem", "suggestie"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["scores", "gemiddelde", "feedback"],
+    "additionalProperties": False,
+}
+
 IMPROVE_ARTICLE_PROMPT = """Je bent een ervaren Nederlandse ghostwriter die literaire non-fictie schrijft. Je hebt eerder een artikel geschreven op basis van een podcast transcript, en een redacteur heeft specifieke feedback gegeven.
 
 **TAAK:** Herschrijf het artikel en verwerk ALLE feedback. Behoud wat al goed is, verbeter wat de redacteur aanwijst. Het resultaat moet een volledig artikel zijn, geen patch of diff.
@@ -186,23 +218,17 @@ SECTION_SIZE = 2500  # Target words per section (smaller = more achievable per-s
 MIN_ARTICLE_RATIO = 0.60  # Article must be at least 60% of transcript word count
 
 
-def _call_claude(client, system_prompt, user_prompt, max_tokens=48000, thinking_budget=10000):
-    """Call Claude with streaming and extended thinking."""
-    article_parts = []
-    with client.messages.stream(
-        model="claude-sonnet-4-6",
-        max_tokens=max_tokens,
-        thinking={
-            "type": "enabled",
-            "budget_tokens": thinking_budget,
-        },
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    ) as stream:
-        for event in stream:
-            if event.type == "content_block_delta" and hasattr(event.delta, "text"):
-                article_parts.append(event.delta.text)
-    return "".join(article_parts)
+def _call_editorial(system_prompt, user_prompt, max_tokens=48000, reasoning_effort="medium", task="podcast_article"):
+    """Generate long editorial text with streaming enabled."""
+    return generate_text(
+        task=task,
+        role="editorial",
+        instructions=system_prompt,
+        input_text=user_prompt,
+        max_output_tokens=max_tokens,
+        reasoning_effort=reasoning_effort,
+        stream=True,
+    )
 
 
 def _strip_transcript_metadata(text):
@@ -287,7 +313,7 @@ def _split_transcript(text, max_words=None):
     return merged
 
 
-def _score_article(client, transcript_text, article):
+def _score_article(transcript_text, article):
     """Score an article against the transcript on 5 quality dimensions.
 
     Returns dict with 'scores', 'gemiddelde', and 'feedback' list.
@@ -314,16 +340,13 @@ def _score_article(client, transcript_text, article):
 Beoordeel dit artikel volgens de instructies. Antwoord ALLEEN in JSON."""
 
     try:
-        response = _call_claude(client, SCORE_ARTICLE_PROMPT, user_prompt, max_tokens=4000, thinking_budget=1024)
-
-        # Strip markdown code blocks if present
-        text = response.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = [line for line in lines if not line.strip().startswith("```")]
-            text = "\n".join(lines).strip()
-
-        result = json.loads(text)
+        result = generate_json(
+            task="podcast_article_score",
+            instructions=SCORE_ARTICLE_PROMPT,
+            input_text=user_prompt,
+            schema=ARTICLE_SCORE_SCHEMA,
+            max_output_tokens=4000,
+        )
 
         # Validate structure
         scores = result.get("scores", {})
@@ -343,12 +366,12 @@ Beoordeel dit artikel volgens de instructies. Antwoord ALLEEN in JSON."""
         )
         return result
 
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
+    except (KeyError, TypeError, ValueError) as e:
         logger.warning(f"Failed to parse quality score response: {e}")
         return None
 
 
-def _improve_article(client, transcript_text, article, feedback_items):
+def _improve_article(transcript_text, article, feedback_items):
     """Improve an article based on specific editorial feedback."""
     feedback_text = "\n".join(
         f"- **{item['dimensie']}**: {item['probleem']} → {item['suggestie']}" for item in feedback_items
@@ -360,13 +383,17 @@ def _improve_article(client, transcript_text, article, feedback_items):
         transcript=transcript_text,
     )
 
-    improved = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, prompt)
+    improved = _call_editorial(
+        PODCAST_TO_ARTICLE_SYSTEM_PROMPT,
+        prompt,
+        task="podcast_article_improvement",
+    )
     improved_words = len(improved.split())
     logger.info(f"Improved article: {improved_words} words")
     return improved
 
 
-def _run_quality_loop(client, transcript_text, article):
+def _run_quality_loop(transcript_text, article):
     """Run iterative quality improvement loop on an article.
 
     Scores the article, identifies weak dimensions, improves, and repeats
@@ -381,7 +408,7 @@ def _run_quality_loop(client, transcript_text, article):
     for iteration in range(QUALITY_LOOP_MAX_ITERATIONS):
         logger.info(f"Quality loop iteration {iteration + 1}/{QUALITY_LOOP_MAX_ITERATIONS}")
 
-        score_result = _score_article(client, transcript_text, article)
+        score_result = _score_article(transcript_text, article)
         if score_result is None:
             logger.warning("Scoring failed, returning current article")
             return article
@@ -400,7 +427,7 @@ def _run_quality_loop(client, transcript_text, article):
             f"Score {avg_score}/10 (target: {QUALITY_LOOP_TARGET_SCORE}), improving {len(feedback_items)} issue(s)..."
         )
 
-        improved = _improve_article(client, transcript_text, article, feedback_items)
+        improved = _improve_article(transcript_text, article, feedback_items)
 
         # Only keep improvement if it's not drastically shorter
         if len(improved.split()) >= len(article.split()) * 0.8:
@@ -410,7 +437,7 @@ def _run_quality_loop(client, transcript_text, article):
             return article
 
     # Final score after all iterations
-    final_score = _score_article(client, transcript_text, article)
+    final_score = _score_article(transcript_text, article)
     if final_score:
         logger.info(
             f"Final quality score after {QUALITY_LOOP_MAX_ITERATIONS} iterations: {final_score['gemiddelde']}/10"
@@ -421,17 +448,16 @@ def _run_quality_loop(client, transcript_text, article):
 
 @retry_with_backoff(max_retries=3, delay=5)
 def create_article(episode, transcript):
-    """Convert transcript to article using Claude."""
+    """Convert a transcript into a Dutch long-form article."""
     logger.info(f"Creating article for: {episode['title']}")
 
     text = transcript if isinstance(transcript, str) else transcript.get("text", "")
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
     word_count = len(text.split())
 
     if word_count <= SECTION_THRESHOLD:
-        article = _create_article_single(client, episode, text, word_count)
+        article = _create_article_single(episode, text, word_count)
     else:
-        article = _create_article_sections(client, episode, text, word_count)
+        article = _create_article_sections(episode, text, word_count)
 
     # Final expansion pass if still too short
     article_words = len(article.split())
@@ -446,15 +472,15 @@ def create_article(episode, transcript):
             )
         else:
             logger.warning(f"Article {article_words} words, target {target}. Running expansion pass...")
-            article = _expand_article(client, episode, text, article, word_count, target)
+            article = _expand_article(episode, text, article, word_count, target)
 
     # Quality improvement loop
-    article = _run_quality_loop(client, text, article)
+    article = _run_quality_loop(text, article)
 
     return article
 
 
-def _create_article_single(client, episode, text, word_count):
+def _create_article_single(episode, text, word_count):
     """Generate article in a single call for shorter transcripts."""
     target_words = max(1500, int(word_count * MIN_ARTICLE_RATIO))
 
@@ -476,13 +502,13 @@ def _create_article_single(client, episode, text, word_count):
 
 Transformeer dit transcript naar een compelling geschreven hoofdstuk volgens de instructies. Schrijf ALTIJD in het Nederlands, ook als het transcript in het Engels is. Schrijf minimaal {target_words} woorden."""
 
-    article = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, user_prompt)
+    article = _call_editorial(PODCAST_TO_ARTICLE_SYSTEM_PROMPT, user_prompt)
     article_words = len(article.split())
     logger.info(f"Article created: {article_words} words (target: {target_words})")
     return article
 
 
-def _generate_section(client, episode, section, section_index, total_sections, word_count, total_target):
+def _generate_section(episode, section, section_index, total_sections, word_count, total_target):
     """Generate a single section."""
     section_words = len(section.split())
     section_target = max(1200, int(section_words * 0.60))
@@ -511,13 +537,17 @@ def _generate_section(client, episode, section, section_index, total_sections, w
 
 Schrijf in het Nederlands. Minimaal {section_target} woorden."""
 
-    part = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, section_prompt)
+    part = _call_editorial(
+        PODCAST_TO_ARTICLE_SYSTEM_PROMPT,
+        section_prompt,
+        task="podcast_article_section",
+    )
     part_words = len(part.split())
     logger.info(f"Section {section_index + 1}: {part_words} words (target: {section_target})")
     return part
 
 
-def _create_article_sections(client, episode, text, word_count):
+def _create_article_sections(episode, text, word_count):
     """Generate article in sections for long transcripts, then combine."""
     sections = _split_transcript(text)
     total_target = max(1500, int(word_count * MIN_ARTICLE_RATIO))
@@ -530,7 +560,7 @@ def _create_article_sections(client, episode, text, word_count):
     for i, section in enumerate(sections):
         section_words = len(section.split())
         logger.info(f"Generating section {i + 1}/{len(sections)} ({section_words} words)...")
-        part = _generate_section(client, episode, section, i, len(sections), word_count, total_target)
+        part = _generate_section(episode, section, i, len(sections), word_count, total_target)
         parts.append(part)
 
     article = "\n\n".join(parts)
@@ -539,7 +569,7 @@ def _create_article_sections(client, episode, text, word_count):
     return article
 
 
-def _expand_article(client, episode, transcript_text, article, transcript_words, target_words):
+def _expand_article(episode, transcript_text, article, transcript_words, target_words):
     """Expansion pass: identify missing content from transcript and add it to the article."""
     article_words = len(article.split())
     shortfall = target_words - article_words
@@ -570,7 +600,11 @@ def _expand_article(client, episode, transcript_text, article, transcript_words,
 
 Herschrijf het artikel in het Nederlands. Behoud de narratieve stijl en structuur, maar breid ALLES uit. Minimaal {target_words} woorden."""
 
-    expanded = _call_claude(client, PODCAST_TO_ARTICLE_SYSTEM_PROMPT, expand_prompt)
+    expanded = _call_editorial(
+        PODCAST_TO_ARTICLE_SYSTEM_PROMPT,
+        expand_prompt,
+        task="podcast_article_expansion",
+    )
     expanded_words = len(expanded.split())
     logger.info(f"Expansion result: {expanded_words} words (was {article_words}, target {target_words})")
 

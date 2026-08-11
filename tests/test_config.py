@@ -7,15 +7,18 @@ import subprocess
 
 def _reload_config(monkeypatch, env=None, op_values=None, op_binary="/opt/homebrew/bin/op"):
     managed_env = [
-        "ANTHROPIC_API_KEY",
         "GROQ_API_KEY",
         "IS_CLOUD",
-        "MEDIAVERWERKER_1PASSWORD_ANTHROPIC_API_KEY_REF",
         "MEDIAVERWERKER_1PASSWORD_GROQ_API_KEY_REF",
+        "MEDIAVERWERKER_1PASSWORD_OPENAI_API_KEY_REF",
         "MEDIAVERWERKER_1PASSWORD_ITEM",
         "MEDIAVERWERKER_1PASSWORD_VAULT",
         "MEDIAVERWERKER_DISABLE_1PASSWORD",
         "OPENAI_API_KEY",
+        "OPENAI_MODEL_BULK",
+        "OPENAI_MODEL_EDITORIAL",
+        "OPENAI_MODEL_POLISH",
+        "OPENAI_MODEL_STRUCTURED",
         "OP_BIN",
         "RENDER",
         "TRANSCRIPTION_PROVIDER",
@@ -56,14 +59,14 @@ class TestOnePasswordFallback:
             monkeypatch,
             op_values={
                 "op://Private/podcast-processor/GROQ_API_KEY": "groq-secret\n",
-                "op://Private/podcast-processor/ANTHROPIC_API_KEY": "anthropic-secret\n",
+                "op://Private/podcast-processor/OPENAI_API_KEY": "openai-secret\n",
             },
         )
 
         assert config.GROQ_API_KEY == "groq-secret"
-        assert config.ANTHROPIC_API_KEY == "anthropic-secret"
+        assert config.OPENAI_API_KEY == "openai-secret"
         assert calls == [
-            ["/opt/homebrew/bin/op", "read", "op://Private/podcast-processor/ANTHROPIC_API_KEY"],
+            ["/opt/homebrew/bin/op", "read", "op://Private/podcast-processor/OPENAI_API_KEY"],
             ["/opt/homebrew/bin/op", "read", "op://Private/podcast-processor/GROQ_API_KEY"],
         ]
 
@@ -72,19 +75,20 @@ class TestOnePasswordFallback:
             monkeypatch,
             env={
                 "GROQ_API_KEY": "env-groq",
-                "ANTHROPIC_API_KEY": "env-anthropic",
+                "OPENAI_API_KEY": "env-openai",
             },
         )
 
         assert config.GROQ_API_KEY == "env-groq"
-        assert config.ANTHROPIC_API_KEY == "env-anthropic"
+        assert config.OPENAI_API_KEY == "env-openai"
         assert calls == []
 
     def test_validate_environment_logs_1password_guidance_when_cli_missing(self, monkeypatch, caplog):
         monkeypatch.delenv("GROQ_API_KEY", raising=False)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("RENDER", raising=False)
         monkeypatch.delenv("IS_CLOUD", raising=False)
+        monkeypatch.delenv("MEDIAVERWERKER_DISABLE_1PASSWORD", raising=False)
         monkeypatch.setenv("OP_BIN", "/definitely-missing/op")
         monkeypatch.setattr(shutil, "which", lambda name: None)
 
@@ -94,7 +98,7 @@ class TestOnePasswordFallback:
         caplog.set_level("INFO")
 
         assert config.validate_environment() is False
-        assert "Missing required environment variables: GROQ_API_KEY, ANTHROPIC_API_KEY" in caplog.text
+        assert "Missing required environment variables: GROQ_API_KEY, OPENAI_API_KEY" in caplog.text
         assert "1Password CLI not found" in caplog.text
         assert "podcast-processor" in caplog.text
 
@@ -103,9 +107,21 @@ class TestOnePasswordFallback:
             monkeypatch,
             env={
                 "GROQ_API_KEY": "env-groq",
-                "ANTHROPIC_API_KEY": "env-anthropic",
+                "OPENAI_API_KEY": "env-openai",
                 "TRANSCRIPTION_PROVIDER": "groq",
             },
         )
 
         assert config.MAX_WHISPER_SIZE == 24 * 1024 * 1024
+
+    def test_model_defaults_are_centralized(self, monkeypatch):
+        config, _calls = _reload_config(
+            monkeypatch,
+            env={"GROQ_API_KEY": "env-groq", "OPENAI_API_KEY": "env-openai"},
+        )
+
+        assert config.OPENAI_MODEL_BULK == "gpt-5-nano"
+        assert config.OPENAI_MODEL_STRUCTURED == "gpt-5.4-nano"
+        assert config.OPENAI_MODEL_POLISH == "gpt-5.6-luna"
+        assert config.OPENAI_MODEL_EDITORIAL == "gpt-5.6-terra"
+        assert config.GROQ_TRANSCRIPTION_MODEL == "whisper-large-v3-turbo"

@@ -1,12 +1,10 @@
-"""Natural language command parsing via Claude API."""
+"""Natural language command parsing via shared structured model routing."""
 
 import json
 import logging
 from datetime import datetime
 
-from anthropic import Anthropic
-
-from .config import ANTHROPIC_API_KEY
+from .ai import generate_json
 from .state import load_podcasts
 
 logger = logging.getLogger("mediaverwerker")
@@ -189,7 +187,6 @@ def parse_command(user_input):
     podcasts = load_podcasts()
     podcasts_str = "\n".join(f"- {p['name']} ({p.get('language', 'en')}): {p['url']}" for p in podcasts)
 
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
     system_prompt = PARSE_SYSTEM_PROMPT.format(
         podcasts=podcasts_str,
         today=datetime.now().strftime("%Y-%m-%d"),
@@ -198,24 +195,17 @@ def parse_command(user_input):
     messages = [{"role": "user", "content": user_input}]
 
     for attempt in range(PARSE_MAX_RETRIES):
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            system=system_prompt,
-            messages=messages,
-        )
-
-        response_text = message.content[0].text.strip()
-
-        # Strip markdown code blocks if present
-        if response_text.startswith("```"):
-            lines = response_text.split("\n")
-            lines = [line for line in lines if not line.strip().startswith("```")]
-            response_text = "\n".join(lines).strip()
-
+        response_text = ""
         try:
-            result = json.loads(response_text)
-        except json.JSONDecodeError:
+            input_text = "\n\n".join(f"{message['role'].upper()}:\n{message['content']}" for message in messages)
+            result = generate_json(
+                task="command_parsing",
+                instructions=system_prompt,
+                input_text=input_text,
+                max_output_tokens=1024,
+            )
+            response_text = json.dumps(result)
+        except (json.JSONDecodeError, ValueError):
             if attempt < PARSE_MAX_RETRIES - 1:
                 logger.warning(f"Parse attempt {attempt + 1} failed (invalid JSON), retrying...")
                 messages = [

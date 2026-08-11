@@ -3,7 +3,6 @@ typer==0.24.1
 feedparser==6.0.12
 requests==2.33.0
 openai==2.29.0
-anthropic==0.86.0
 python-dotenv==1.2.2
 python-dateutil==2.9.0.post0
 yt-dlp==2026.3.17
