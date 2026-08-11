@@ -795,7 +795,7 @@ def execute_pipeline_once():
         update_all_rss_feeds()
         push_feeds_to_github()
         write_status_file(success_count, len(new_episodes), errors)
-        return 0
+        return 1 if errors else 0
 
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
