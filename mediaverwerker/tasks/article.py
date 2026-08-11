@@ -582,12 +582,23 @@ def save_article(episode, article):
     """Save article as Markdown."""
     date_str = datetime.now().strftime("%Y-%m-%d")
     storage_key = episode.get("feed_storage_key") or episode.get("podcast_name", "unknown")
-    base_filename = f"{date_str}_{storage_key}_{sanitize_filename(episode['title'])}"
+    identity = ""
+    if episode.get("source_type") == "instagram":
+        identity = f"_{sanitize_filename(episode['guid'].rpartition(':')[2])}"
+    base_filename = f"{date_str}_{storage_key}_{sanitize_filename(episode['title'])}{identity}"
 
     md_filepath = ARTICLES_DIR / f"{base_filename}.md"
     with open(md_filepath, "w", encoding="utf-8") as f:
         metadata_lines = []
-        for key in ("feed_storage_key", "source_url", "podcast_name", "guid"):
+        for key in (
+            "feed_storage_key",
+            "source_url",
+            "podcast_name",
+            "guid",
+            "source_type",
+            "published_at",
+            "author",
+        ):
             value = episode.get(key)
             if value:
                 metadata_lines.append(f"{key}: {value}")

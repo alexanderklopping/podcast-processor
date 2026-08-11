@@ -49,6 +49,25 @@ def test_get_new_episodes_limits_to_latest_per_podcast(monkeypatch):
     assert [episode["title"] for episode in episodes] == ["Newest episode"]
 
 
+def test_full_pipeline_runs_instagram_when_there_are_no_new_podcasts(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline, "validate_environment", lambda: True)
+    monkeypatch.setattr(pipeline, "IS_CLOUD", False)
+    monkeypatch.setattr(pipeline, "retry_failed_episodes", lambda: None)
+    monkeypatch.setattr(pipeline, "get_all_new_episodes", lambda: [])
+    monkeypatch.setattr(
+        pipeline,
+        "sync_instagram_feeds",
+        lambda: calls.append("instagram") or {"processed": 0, "errors": []},
+    )
+    monkeypatch.setattr(pipeline, "update_all_rss_feeds", lambda: calls.append("feeds"))
+    monkeypatch.setattr(pipeline, "push_feeds_to_github", lambda: calls.append("push"))
+    monkeypatch.setattr(pipeline, "write_status_file", lambda *_args: None)
+
+    assert pipeline.execute_pipeline_once() == 0
+    assert calls == ["instagram", "feeds", "push"]
+
+
 def test_batch_process_publishes_after_each_success(monkeypatch):
     calls = []
 

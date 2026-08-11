@@ -21,6 +21,7 @@ __pycache__/
 processed_episodes.json
 failed_episodes.json
 status.json
+instagram-cookies-*.txt
 
 # Feeds (separate repo)
 feeds/

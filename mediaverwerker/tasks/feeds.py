@@ -8,6 +8,8 @@ import subprocess
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+from dateutil import parser as dateparser
+
 from ..config import (
     ARTICLES_DIR,
     FEEDS_DIR,
@@ -45,6 +47,7 @@ def _validate_feed_xml(feed_content):
         # Register content namespace to avoid parsing errors
         ET.register_namespace("content", "http://purl.org/rss/1.0/modules/content/")
         ET.register_namespace("atom", "http://www.w3.org/2005/Atom")
+        ET.register_namespace("dc", "http://purl.org/dc/elements/1.1/")
         root = ET.fromstring(feed_content.encode("utf-8"))
     except ET.ParseError as e:
         issues.append(f"XML parse error: {e}")
@@ -247,8 +250,9 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
             else:
                 continue
 
-            date_match = re.match(r"^(\d{4}-\d{2}-\d{2})_", filename)
-            if date_match:
+            if metadata.get("source_type") == "instagram" and metadata.get("published_at"):
+                pub_date = dateparser.isoparse(metadata["published_at"])
+            elif date_match := re.match(r"^(\d{4}-\d{2}-\d{2})_", filename):
                 pub_date = datetime.strptime(date_match.group(1), "%Y-%m-%d")
             else:
                 pub_date = datetime.fromtimestamp(md_file.stat().st_mtime)
@@ -259,8 +263,9 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
                     "description": extract_description_from_markdown(content),
                     "content": markdown_to_html(content),
                     "pub_date": pub_date,
-                    "guid": filename,
+                    "guid": metadata.get("guid") if metadata.get("source_type") == "instagram" else filename,
                     "link_url": metadata.get("source_url"),
+                    "author": metadata.get("author"),
                 }
             )
         except (OSError, ValueError, KeyError) as e:
@@ -282,12 +287,15 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
         link_url = article.get("link_url") or f"{FEEDS_BASE_URL}/{feed_filename}#{article['guid']}"
         link_escaped = link_url.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+        author_xml = (
+            f"\n      <dc:creator>{_escape_feed_text(article['author'])}</dc:creator>" if article.get("author") else ""
+        )
         item = f"""    <item>
       <title>{title_escaped}</title>
       <link>{link_escaped}</link>
       <description>{description_escaped}</description>
       <pubDate>{rfc822_date}</pubDate>
-      <guid isPermaLink="false">{article["guid"]}</guid>
+      <guid isPermaLink="false">{_escape_feed_text(article["guid"])}</guid>{author_xml}
       <content:encoded><![CDATA[{content_escaped}]]></content:encoded>
     </item>"""
         rss_items.append(item)
@@ -296,7 +304,7 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
     feed_url = f"{FEEDS_BASE_URL}/{feed_filename}"
     feed_description = description or f"Artikelen gegenereerd van {podcast_name} podcast afleveringen"
     feed = f"""<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom">
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>{podcast_name} - Podcast Artikelen</title>
     <link>{feed_url}</link>
@@ -335,18 +343,23 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
                 link_url = article.get("link_url") or f"{FEEDS_BASE_URL}/{feed_filename}#{article['guid']}"
                 link_fixed = _escape_feed_text(link_url)
 
+                author_xml = (
+                    f"\n      <dc:creator>{_escape_feed_text(article['author'])}</dc:creator>"
+                    if article.get("author")
+                    else ""
+                )
                 item = f"""    <item>
       <title>{title_fixed}</title>
       <link>{link_fixed}</link>
       <description>{description_fixed}</description>
       <pubDate>{rfc822_date}</pubDate>
-      <guid isPermaLink="false">{article["guid"]}</guid>
+      <guid isPermaLink="false">{_escape_feed_text(article["guid"])}</guid>{author_xml}
       <content:encoded><![CDATA[{content_fixed}]]></content:encoded>
     </item>"""
                 rss_items_fixed.append(item)
 
             feed = f"""<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom">
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>{_fix_feed_encoding(podcast_name)} - Podcast Artikelen</title>
     <link>{feed_url}</link>
@@ -395,6 +408,10 @@ def update_all_rss_feeds():
         generate_rss_feed("Adhoc")
     except Exception as e:
         logger.error(f"Error generating Adhoc feed: {e}")
+
+    from .instagram import update_instagram_rss_feeds
+
+    update_instagram_rss_feeds()
 
 
 def setup_feeds_repo_for_cloud():

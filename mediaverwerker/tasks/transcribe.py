@@ -162,12 +162,10 @@ def transcribe_single_file(client, model, audio_path, language="en", timestamps=
     """Transcribe a single audio file with retry logic."""
     with open(audio_path, "rb") as audio_file:
         response_format = "verbose_json" if timestamps else "text"
-        result = client.audio.transcriptions.create(
-            model=model,
-            file=audio_file,
-            language=language,
-            response_format=response_format,
-        )
+        request = {"model": model, "file": audio_file, "response_format": response_format}
+        if language and language != "auto":
+            request["language"] = language
+        result = client.audio.transcriptions.create(**request)
         return result
 
 
@@ -267,7 +265,10 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
 def save_transcript(episode, transcript):
     """Save transcript to file."""
     storage_key = episode.get("feed_storage_key") or episode.get("podcast_name", "unknown")
-    filename = f"{storage_key}_{sanitize_filename(episode['title'])}.txt"
+    identity = ""
+    if episode.get("source_type") == "instagram":
+        identity = f"_{sanitize_filename(episode['guid'].rpartition(':')[2])}"
+    filename = f"{storage_key}_{sanitize_filename(episode['title'])}{identity}.txt"
     filepath = TRANSCRIPTS_DIR / filename
 
     text = transcript if isinstance(transcript, str) else transcript.get("text", "")
