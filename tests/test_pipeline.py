@@ -118,6 +118,11 @@ def test_execute_pipeline_returns_failure_for_partial_batch(monkeypatch):
     monkeypatch.setattr(pipeline, "push_feeds_to_github", lambda: None)
     monkeypatch.setattr(
         pipeline,
+        "sync_instagram_feeds",
+        lambda: {"processed": 0, "errors": []},
+    )
+    monkeypatch.setattr(
+        pipeline,
         "write_status_file",
         lambda success, total, errors: statuses.append((success, total, errors)),
     )
