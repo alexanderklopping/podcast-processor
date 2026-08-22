@@ -37,6 +37,12 @@ def test_yt_dlp_cmd_includes_configured_js_runtime_and_remote_components(monkeyp
     assert cmd[cmd.index("--extractor-args") + 1] == "youtube:player_skip=webpage;player_client=tv_embedded"
 
 
+def test_interview_workflow_exposes_node_to_yt_dlp():
+    workflow = (Path(__file__).parents[1] / ".github/workflows/process-interview.yml").read_text(encoding="utf-8")
+
+    assert "YTDLP_JS_RUNTIMES: node" in workflow
+
+
 def test_yt_dlp_cmd_uses_cookie_secret_without_youtube_workaround(monkeypatch):
     monkeypatch.setattr(download, "YTDLP_JS_RUNTIMES", "node", raising=False)
     monkeypatch.setattr(download, "YTDLP_REMOTE_COMPONENTS", "ejs:github")
