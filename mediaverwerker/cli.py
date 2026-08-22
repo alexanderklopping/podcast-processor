@@ -7,6 +7,7 @@ from typing import Optional
 import typer
 
 from .config import init, validate_environment
+from .interviews import process_interview
 from .nlp import parse_command
 from .pipeline import (
     find_episode_by_name_and_date,
@@ -35,6 +36,18 @@ def _init():
     """Initialize environment."""
     setup_logging()
     init()
+
+
+@app.command("interview")
+def cmd_interview(
+    interview_id: str = typer.Option(..., "--id", help="RSS Reader interview ID"),
+    url: str = typer.Option(..., "--url", help="Source URL"),
+    callback_url: str = typer.Option(..., "--callback-url", help="Authenticated RSS Reader callback"),
+    attempt: int = typer.Option(1, "--attempt", min=1, help="Idempotent processing attempt"),
+):
+    """Process one interview using fixed workflow inputs."""
+    _init()
+    process_interview(interview_id, url, callback_url, attempt)
 
 
 def _dispatch_actions(parsed):

@@ -8,5 +8,6 @@ python-dateutil==2.9.0.post0
 yt-dlp==2026.3.17
 gallery-dl==1.31.6
 curl-cffi==0.14.0
+vercel==0.10.0
 
 h11==0.16.0
