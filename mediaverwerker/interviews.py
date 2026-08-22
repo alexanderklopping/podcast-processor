@@ -106,7 +106,8 @@ class InterviewCallback:
             headers={"Authorization": f"Bearer {self.secret}"},
             timeout=60,
         )
-        response.raise_for_status()
+        if not response.ok:
+            raise RuntimeError(f"Callback {status} geweigerd ({response.status_code}): {response.text[:1000]}")
 
 
 def normalize_audio(source_path, interview_id):
@@ -215,13 +216,17 @@ def clean_transcript(turns):
         )
         candidate = result.get("turns", [])
         valid_ids = [item.get("id") for item in candidate] == [item["id"] for item in batch]
+        normalized_candidate = []
+        for original, edited in zip(batch, candidate):
+            edited_text = str(edited.get("text", "")).strip() or original["text"].strip()
+            normalized_candidate.append({**edited, "text": edited_text})
         original_words = sum(_word_count(item["text"]) for item in batch)
-        cleaned_words = sum(_word_count(item.get("text", "")) for item in candidate)
+        cleaned_words = sum(_word_count(item["text"]) for item in normalized_candidate)
         retention = cleaned_words / max(original_words, 1)
         if not valid_ids or retention < MINIMUM_CONTENT_RETENTION:
             raise RuntimeError(f"Volledigheidscontrole mislukt: {retention:.0%} tekst behouden; minimaal 75% vereist")
-        for original, edited in zip(batch, candidate):
-            cleaned.append({**original, "text": edited["text"].strip()})
+        for original, edited in zip(batch, normalized_candidate):
+            cleaned.append({**original, "text": edited["text"]})
     return cleaned
 
 

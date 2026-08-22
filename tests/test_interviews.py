@@ -91,6 +91,24 @@ def test_clean_transcript_blocks_large_content_loss(monkeypatch):
         interviews.clean_transcript(_raw_turns())
 
 
+def test_clean_transcript_keeps_original_when_editing_empties_a_turn(monkeypatch):
+    raw_turns = _raw_turns()
+    monkeypatch.setattr(
+        interviews,
+        "generate_json",
+        lambda **_kwargs: {
+            "turns": [
+                {"id": turn["id"], "text": "" if index == 2 else turn["text"]} for index, turn in enumerate(raw_turns)
+            ]
+        },
+    )
+
+    cleaned = interviews.clean_transcript(raw_turns)
+
+    assert cleaned[2]["text"] == raw_turns[2]["text"]
+    assert all(turn["text"] for turn in cleaned)
+
+
 def test_process_interview_always_downloads_audio_and_reports_fixed_statuses(monkeypatch, tmp_path):
     audio = tmp_path / "normalized.mp3"
     audio.write_bytes(b"mp3-data")
