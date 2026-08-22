@@ -51,6 +51,8 @@ def test_structure_uses_safe_speaker_fallbacks_and_exact_chapter_turns(monkeypat
     ]
     assert [chapter["turnIndex"] for chapter in result["chapters"]] == list(range(6))
     assert result["turns"][0]["speakerLabel"] == "Interviewer"
+    assert result["title"] == "Gast — Deel 1"
+    assert result["language"] == "nl"
 
 
 def test_structure_does_not_guess_roles_from_speaker_order(monkeypatch):
@@ -58,8 +60,8 @@ def test_structure_does_not_guess_roles_from_speaker_order(monkeypatch):
         interviews,
         "generate_json",
         lambda **_kwargs: {
-            "title": "Gesprek — onderwerp",
-            "language": "nl",
+            "title": "Guest — distributed systems",
+            "language": "English",
             "speakerMappings": [
                 {
                     "speaker": speaker,
@@ -70,14 +72,15 @@ def test_structure_does_not_guess_roles_from_speaker_order(monkeypatch):
                 }
                 for speaker in ["A", "B"]
             ],
-            "chapters": [{"title": f"Deel {index + 1}", "startTime": index * 10.0} for index in range(6)],
+            "chapters": [{"title": f"Part {index + 1}", "startTime": index * 10.0} for index in range(6)],
         },
     )
 
     result = interviews.apply_interview_structure(_raw_turns(), {"title": "Bron"})
 
-    assert [speaker["label"] for speaker in result["speakers"]] == ["Spreker 1", "Spreker 2"]
+    assert [speaker["label"] for speaker in result["speakers"]] == ["Speaker 1", "Speaker 2"]
     assert [speaker["role"] for speaker in result["speakers"]] == ["speaker", "speaker"]
+    assert result["language"] == "en"
 
 
 def test_clean_transcript_blocks_large_content_loss(monkeypatch):

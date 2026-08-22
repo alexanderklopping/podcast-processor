@@ -132,9 +132,9 @@ def generate_json(
     schema=None,
     max_output_tokens=2048,
     reasoning_effort="low",
+    role="structured",
 ):
     """Generate and parse JSON, optionally constrained by a strict JSON schema."""
-    role = "structured"
     model = model_for(role)
     started_at = time.monotonic()
     response = None

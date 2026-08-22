@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -236,8 +237,42 @@ def clean_transcript(turns):
     return cleaned
 
 
-def _fallback_speaker_labels(speakers):
-    return {speaker: f"Spreker {index + 1}" for index, speaker in enumerate(speakers)}
+def _normalize_language(value, episode):
+    language = str(value or "").strip().lower()
+    aliases = {
+        "dutch": "nl",
+        "nederlands": "nl",
+        "english": "en",
+        "engels": "en",
+        "german": "de",
+        "deutsch": "de",
+        "duits": "de",
+        "french": "fr",
+        "français": "fr",
+        "frans": "fr",
+        "spanish": "es",
+        "español": "es",
+        "spaans": "es",
+    }
+    language = aliases.get(language, language)
+    if re.fullmatch(r"[a-z]{2}", language):
+        return language
+    source_language = str(episode.get("language") or "").split("-", 1)[0].lower()
+    return source_language if re.fullmatch(r"[a-z]{2}", source_language) else "und"
+
+
+def _localized_labels(language):
+    return {
+        "nl": {"speaker": "Spreker", "interviewer": "Interviewer", "guest": "Gast"},
+        "de": {"speaker": "Sprecher", "interviewer": "Interviewer", "guest": "Gast"},
+        "fr": {"speaker": "Intervenant", "interviewer": "Intervieweur", "guest": "Invité"},
+        "es": {"speaker": "Hablante", "interviewer": "Entrevistador", "guest": "Invitado"},
+    }.get(language, {"speaker": "Speaker", "interviewer": "Interviewer", "guest": "Guest"})
+
+
+def _fallback_speaker_labels(speakers, language):
+    speaker_label = _localized_labels(language)["speaker"]
+    return {speaker: f"{speaker_label} {index + 1}" for index, speaker in enumerate(speakers)}
 
 
 def apply_interview_structure(turns, episode):
@@ -245,8 +280,12 @@ def apply_interview_structure(turns, episode):
     result = generate_json(
         task="structure-interview",
         instructions=(
-            "Maak metadata voor een trouw gesprekstranscript. Titel: 'Gast — onderwerp' in de dominante taal. "
-            "Maak 6-10 concrete hoofdstukken in die taal met een starttijd die voorkomt in het transcript. "
+            "Maak metadata voor een trouw gesprekstranscript. Bepaal eerst de dominante GESPROKEN taal en "
+            "geef die als ISO 639-1 code van twee letters. Schrijf titel en alle hoofdstukken uitsluitend in "
+            "die gesproken taal, nooit automatisch in de taal van deze instructie. Titel: "
+            "'<zekere gastnaam of het lokale neutrale woord voor gast> — <specifiek onderwerp>'; gebruik nooit "
+            "letterlijke placeholders zoals onderwerp, topic of subject. Maak 6-10 concrete hoofdstukken in "
+            "dezelfde taal met een starttijd die voorkomt in het transcript. "
             "Bepaal per spreker ook de rol en een afzonderlijke roleConfidence. Gebruik een echte naam alleen "
             "bij hoge zekerheid (confidence >= 0.9); anders een rol alleen als roleConfidence >= 0.8, en anders "
             "Spreker 1/2. Uitspraken blijven in hun gesproken taal."
@@ -262,7 +301,9 @@ def apply_interview_structure(turns, episode):
         schema=STRUCTURE_SCHEMA,
         max_output_tokens=5000,
         reasoning_effort="low",
+        role="editorial",
     )
+    language = _normalize_language(result["language"], episode)
     duration = max((turn["end"] for turn in turns), default=0)
     chapters = sorted(result["chapters"], key=lambda item: item["startTime"])
     if not 6 <= len(chapters) <= 10 or any(
@@ -271,7 +312,8 @@ def apply_interview_structure(turns, episode):
         raise RuntimeError("Hoofdstukcontrole mislukt: verwacht 6-10 geldige tijdcodes")
 
     speakers = list(dict.fromkeys(turn["speaker"] for turn in turns))
-    labels = _fallback_speaker_labels(speakers)
+    localized_labels = _localized_labels(language)
+    labels = _fallback_speaker_labels(speakers, language)
     roles = {speaker: "speaker" for speaker in speakers}
     for mapping in result["speakerMappings"]:
         speaker = mapping["speaker"]
@@ -279,7 +321,7 @@ def apply_interview_structure(turns, episode):
             continue
         if mapping["roleConfidence"] >= 0.8:
             roles[speaker] = mapping["role"]
-            labels[speaker] = {"interviewer": "Interviewer", "guest": "Gast"}.get(mapping["role"], labels[speaker])
+            labels[speaker] = localized_labels.get(mapping["role"], labels[speaker])
         if mapping["confidence"] >= 0.9:
             labels[speaker] = mapping["label"].strip()
     structured_turns = [
@@ -315,9 +357,12 @@ def apply_interview_structure(turns, episode):
                 "turnIndex": turn_index,
             }
         )
+    title = result["title"].strip()
+    if re.search(r"\s—\s(?:onderwerp|topic|subject)\s*$", title, re.IGNORECASE):
+        title = f"{localized_labels['guest']} — {structured_chapters[0]['title']}"
     return {
-        "title": result["title"].strip(),
-        "language": result["language"].strip(),
+        "title": title,
+        "language": language,
         "speakers": speaker_data,
         "turns": structured_turns,
         "chapters": structured_chapters,
