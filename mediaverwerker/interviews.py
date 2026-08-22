@@ -215,15 +215,21 @@ def clean_transcript(turns):
             reasoning_effort="low",
         )
         candidate = result.get("turns", [])
-        valid_ids = [item.get("id") for item in candidate] == [item["id"] for item in batch]
+        expected_ids = [item["id"] for item in batch]
+        candidate_by_id = {item.get("id"): item for item in candidate}
+        if len(candidate) == len(batch) and set(candidate_by_id) == set(expected_ids):
+            ordered_candidate = [candidate_by_id[item_id] for item_id in expected_ids]
+        else:
+            logger.warning("Transcriptredactie wijzigde beurt-IDs; oorspronkelijke batch blijft behouden")
+            ordered_candidate = [{"id": item["id"], "text": item["text"]} for item in batch]
         normalized_candidate = []
-        for original, edited in zip(batch, candidate):
+        for original, edited in zip(batch, ordered_candidate):
             edited_text = str(edited.get("text", "")).strip() or original["text"].strip()
             normalized_candidate.append({**edited, "text": edited_text})
         original_words = sum(_word_count(item["text"]) for item in batch)
         cleaned_words = sum(_word_count(item["text"]) for item in normalized_candidate)
         retention = cleaned_words / max(original_words, 1)
-        if not valid_ids or retention < MINIMUM_CONTENT_RETENTION:
+        if retention < MINIMUM_CONTENT_RETENTION:
             raise RuntimeError(f"Volledigheidscontrole mislukt: {retention:.0%} tekst behouden; minimaal 75% vereist")
         for original, edited in zip(batch, normalized_candidate):
             cleaned.append({**original, "text": edited["text"]})
