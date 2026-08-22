@@ -4,6 +4,7 @@ import base64
 import html
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -26,6 +27,7 @@ from ..config import (
     YTDLP_EXTRACTOR_ARGS,
     YTDLP_IMPERSONATE,
     YTDLP_JS_RUNTIMES,
+    YTDLP_POT_SERVER_HOME,
     YTDLP_REMOTE_COMPONENTS,
 )
 from ..util import retry_with_backoff, sanitize_filename, validate_url
@@ -50,6 +52,13 @@ def _yt_dlp_cmd():
         cmd.extend(["--js-runtimes", YTDLP_JS_RUNTIMES])
     if YTDLP_REMOTE_COMPONENTS:
         cmd.extend(["--remote-components", YTDLP_REMOTE_COMPONENTS])
+    if YTDLP_POT_SERVER_HOME:
+        cmd.extend(
+            [
+                "--extractor-args",
+                f"youtubepot-bgutilscript:server_home={YTDLP_POT_SERVER_HOME}",
+            ]
+        )
     if YTDLP_EXTRACTOR_ARGS and not cookies_file:
         cmd.extend(["--extractor-args", YTDLP_EXTRACTOR_ARGS])
     if YTDLP_IMPERSONATE:
@@ -84,8 +93,25 @@ def _yt_dlp_cookies_file():
 
 
 def _run_yt_dlp(cmd):
-    """Run yt-dlp and preserve stderr/stdout when it fails."""
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    """Run yt-dlp without exposing unrelated application secrets."""
+    safe_environment_keys = {
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "NODE_EXTRA_CA_CERTS",
+        "PATH",
+        "PATHEXT",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_FILE",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "WINDIR",
+        "XDG_CACHE_HOME",
+    }
+    safe_environment = {key: value for key, value in os.environ.items() if key in safe_environment_keys}
+    result = subprocess.run(cmd, capture_output=True, text=True, env=safe_environment)
     if result.returncode == 0:
         return result
 
