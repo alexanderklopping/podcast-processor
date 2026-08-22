@@ -275,6 +275,21 @@ def _fallback_speaker_labels(speakers, language):
     return {speaker: f"{speaker_label} {index + 1}" for index, speaker in enumerate(speakers)}
 
 
+def _is_generic_speaker_label(value):
+    normalized = re.sub(r"[^a-zà-ÿ]+", " ", str(value or "").lower()).strip()
+    return normalized in {
+        "speaker",
+        "spreker",
+        "guest",
+        "gast",
+        "interviewer",
+        "interviewee",
+        "host",
+        "unknown",
+        "onbekend",
+    }
+
+
 def apply_interview_structure(turns, episode):
     transcript = "\n".join(f"[{t['start']:.1f}] {t['speaker']}: {t['text']}" for t in turns)
     result = generate_json(
@@ -322,7 +337,7 @@ def apply_interview_structure(turns, episode):
         if mapping["roleConfidence"] >= 0.8:
             roles[speaker] = mapping["role"]
             labels[speaker] = localized_labels.get(mapping["role"], labels[speaker])
-        if mapping["confidence"] >= 0.9:
+        if mapping["confidence"] >= 0.9 and not _is_generic_speaker_label(mapping["label"]):
             labels[speaker] = mapping["label"].strip()
     structured_turns = [
         {
