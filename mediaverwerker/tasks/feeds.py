@@ -237,8 +237,10 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
                 content = f.read()
             metadata = extract_embedded_metadata(content)
 
-            if metadata.get("feed_storage_key") == storage_key:
-                pass
+            metadata_storage_key = metadata.get("feed_storage_key")
+            if metadata_storage_key:
+                if metadata_storage_key != storage_key:
+                    continue
             elif f"_{storage_key}_" in filename:
                 pass
             elif podcast_name == "VSR":

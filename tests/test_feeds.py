@@ -157,6 +157,57 @@ This article was generated from a manually submitted link.
     assert "https://example.com/episode" in feed_xml
 
 
+def test_generate_vsr_feed_rejects_articles_assigned_to_another_feed(tmp_path, monkeypatch):
+    """An explicit feed key is authoritative; VSR must not act as a catch-all."""
+    from mediaverwerker.tasks import feeds
+
+    articles_dir = tmp_path / "articles"
+    feeds_dir = tmp_path / "feeds"
+    articles_dir.mkdir()
+    feeds_dir.mkdir()
+
+    (articles_dir / "2026-08-22_instagram-yuanunpackschina_Test.md").write_text(
+        """<!--
+feed_storage_key: instagram-yuanunpackschina
+source_url: https://www.instagram.com/reel/test/
+podcast_name: Yuan (Yuanpu Huang)
+guid: instagram:yuanunpackschina:test
+source_type: instagram
+published_at: 2026-08-22T12:00:00+00:00
+-->
+
+# Yuan interview
+
+This item belongs only in Yuan's feed.
+""",
+        encoding="utf-8",
+    )
+    (articles_dir / "2026-08-22_VSR_Test.md").write_text(
+        """<!--
+feed_storage_key: VSR
+source_url: https://example.com/vsr
+podcast_name: VSR
+-->
+
+# VSR episode
+
+This item belongs in VSR.
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(feeds, "ARTICLES_DIR", articles_dir)
+    monkeypatch.setattr(feeds, "FEEDS_DIR", feeds_dir)
+    monkeypatch.setattr(feeds, "load_podcasts", lambda: [{"name": "VSR"}])
+
+    feed_path = generate_rss_feed("VSR")
+    feed_xml = feed_path.read_text(encoding="utf-8")
+
+    assert "VSR episode" in feed_xml
+    assert "Yuan interview" not in feed_xml
+    assert "instagram:yuanunpackschina:test" not in feed_xml
+
+
 def test_persist_articles_to_feeds_repo_copies_local_markdown(tmp_path, monkeypatch):
     """Publishing a feed keeps article sources available for future rebuilds."""
     from mediaverwerker.tasks import feeds
