@@ -64,6 +64,7 @@ jobs:
           INTERVIEW_CALLBACK_SECRET: ${{ secrets.INTERVIEW_CALLBACK_SECRET }}
           YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
           YTDLP_IMPERSONATE: ${{ vars.YTDLP_IMPERSONATE }}
+          YTDLP_JS_RUNTIMES: node
           YTDLP_REMOTE_COMPONENTS: ${{ vars.YTDLP_REMOTE_COMPONENTS }}
           INTERVIEW_ID_INPUT: ${{ inputs.interview_id }}
           SOURCE_URL_INPUT: ${{ inputs.source_url }}
