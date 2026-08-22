@@ -109,6 +109,32 @@ def test_clean_transcript_keeps_original_when_editing_empties_a_turn(monkeypatch
     assert all(turn["text"] for turn in cleaned)
 
 
+def test_clean_transcript_restores_model_reordered_ids(monkeypatch):
+    raw_turns = _raw_turns()
+    edited = [{"id": turn["id"], "text": f"Bewerkt {turn['text']}"} for turn in reversed(raw_turns)]
+    monkeypatch.setattr(interviews, "generate_json", lambda **_kwargs: {"turns": edited})
+
+    cleaned = interviews.clean_transcript(raw_turns)
+
+    assert [turn["id"] for turn in cleaned] == [turn["id"] for turn in raw_turns]
+    assert cleaned[0]["text"] == f"Bewerkt {raw_turns[0]['text']}"
+
+
+def test_clean_transcript_keeps_original_batch_when_model_changes_ids(monkeypatch):
+    raw_turns = _raw_turns()
+    monkeypatch.setattr(
+        interviews,
+        "generate_json",
+        lambda **_kwargs: {
+            "turns": [{"id": f"changed-{index}", "text": turn["text"]} for index, turn in enumerate(raw_turns)]
+        },
+    )
+
+    cleaned = interviews.clean_transcript(raw_turns)
+
+    assert cleaned == raw_turns
+
+
 def test_process_interview_always_downloads_audio_and_reports_fixed_statuses(monkeypatch, tmp_path):
     audio = tmp_path / "normalized.mp3"
     audio.write_bytes(b"mp3-data")
