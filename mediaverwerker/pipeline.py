@@ -371,8 +371,8 @@ def process_eva_episode(video_path, output_dir=None, burn=True, no_subtitles=Fal
     return result
 
 
-def process_individual_url(url, topic=None, output_format="article", output_dir=None, publish_to_feed=True):
-    """Download and process a single media URL into the individual episodes feed."""
+def process_individual_url(url, topic=None, output_format="article", output_dir=None, publish_to_feed=False):
+    """Legacy URL processor. Public catch-all feed publishing is disabled by default."""
     import shutil
 
     from .util import validate_url

@@ -133,6 +133,13 @@ TRANSCRIPTION_PROVIDER = _first_nonempty(
     "groq",
 )
 
+# Interview workflow: diarization model with speaker-labelled JSON output.
+OPENAI_DIARIZATION_MODEL = _first_nonempty(
+    _env_config.get("OPENAI_DIARIZATION_MODEL"),
+    os.getenv("OPENAI_DIARIZATION_MODEL"),
+    "gpt-4o-transcribe-diarize",
+)
+
 OPENAI_API_KEY = _resolve_secret(
     "OPENAI_API_KEY",
     use_1password=True,

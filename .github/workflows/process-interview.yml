@@ -1,0 +1,64 @@
+name: Process interview
+
+on:
+  workflow_dispatch:
+    inputs:
+      interview_id:
+        description: RSS Reader interview ID
+        required: true
+        type: string
+      source_url:
+        description: Supported X, YouTube or podcast episode URL
+        required: true
+        type: string
+      callback_url:
+        description: RSS Reader callback endpoint
+        required: true
+        type: string
+      attempt:
+        description: Idempotent processing attempt
+        required: true
+        type: string
+
+concurrency:
+  group: interview-${{ inputs.interview_id }}-${{ inputs.attempt }}
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      IS_CLOUD: "true"
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+      INTERVIEW_CALLBACK_SECRET: ${{ secrets.INTERVIEW_CALLBACK_SECRET }}
+      YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
+      YTDLP_IMPERSONATE: ${{ vars.YTDLP_IMPERSONATE }}
+      YTDLP_REMOTE_COMPONENTS: ${{ vars.YTDLP_REMOTE_COMPONENTS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install processor
+        run: |
+          pip install -r requirements.txt
+          pip install -e .
+      - name: Process interview
+        env:
+          INTERVIEW_ID_INPUT: ${{ inputs.interview_id }}
+          SOURCE_URL_INPUT: ${{ inputs.source_url }}
+          CALLBACK_URL_INPUT: ${{ inputs.callback_url }}
+          ATTEMPT_INPUT: ${{ inputs.attempt }}
+        run: >-
+          mediaverwerker interview
+          --id "$INTERVIEW_ID_INPUT"
+          --url "$SOURCE_URL_INPUT"
+          --callback-url "$CALLBACK_URL_INPUT"
+          --attempt "$ATTEMPT_INPUT"

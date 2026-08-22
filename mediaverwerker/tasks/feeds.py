@@ -398,12 +398,10 @@ def update_all_rss_feeds():
             generate_rss_feed(podcast["name"])
         except Exception as e:
             logger.error(f"Error generating feed for {podcast['name']}: {e}")
-    try:
-        update_individual_rss_feed()
-    except Exception as e:
-        logger.error(f"Error generating feed for {INDIVIDUAL_FEED_NAME}: {e}")
+    # The legacy public individuele-afleveringen.xml is intentionally no longer generated.
+    # Its existing file is preserved until a separately approved live transition removes it.
 
-    # Always generate the catch-all feed for individual/adhoc episodes
+    # Keep the unrelated Adhoc feed unchanged.
     try:
         generate_rss_feed("Adhoc")
     except Exception as e:

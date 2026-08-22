@@ -1,5 +1,6 @@
 # Environment
 .env
+.venv/
 
 # Audio files (too large for git)
 audio/
