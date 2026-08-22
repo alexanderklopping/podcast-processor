@@ -30,28 +30,42 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
-    env:
-      IS_CLOUD: "true"
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
-      INTERVIEW_CALLBACK_SECRET: ${{ secrets.INTERVIEW_CALLBACK_SECRET }}
-      YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
-      YTDLP_IMPERSONATE: ${{ vars.YTDLP_IMPERSONATE }}
-      YTDLP_REMOTE_COMPONENTS: ${{ vars.YTDLP_REMOTE_COMPONENTS }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install processor
         run: |
           pip install -r requirements.txt
           pip install -e .
+      - name: Install YouTube PO token provider
+        env:
+          PROVIDER_SHA: 7511309af023b09788dc8f2efc96cc3671291e6c
+        run: |
+          provider_dir="$RUNNER_TEMP/bgutil-ytdlp-pot-provider"
+          git clone --filter=blob:none https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git "$provider_dir"
+          git -C "$provider_dir" checkout --detach "$PROVIDER_SHA"
+          cd "$provider_dir/server"
+          npm ci
+          npx tsc
+          echo "YTDLP_POT_SERVER_HOME=$PWD" >> "$GITHUB_ENV"
       - name: Process interview
         env:
+          IS_CLOUD: "true"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          INTERVIEW_CALLBACK_SECRET: ${{ secrets.INTERVIEW_CALLBACK_SECRET }}
+          YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
+          YTDLP_IMPERSONATE: ${{ vars.YTDLP_IMPERSONATE }}
+          YTDLP_JS_RUNTIMES: node
+          YTDLP_REMOTE_COMPONENTS: ${{ vars.YTDLP_REMOTE_COMPONENTS }}
           INTERVIEW_ID_INPUT: ${{ inputs.interview_id }}
           SOURCE_URL_INPUT: ${{ inputs.source_url }}
           CALLBACK_URL_INPUT: ${{ inputs.callback_url }}

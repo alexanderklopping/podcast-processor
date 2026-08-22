@@ -22,6 +22,7 @@ def test_yt_dlp_cmd_includes_configured_js_runtime_and_remote_components(monkeyp
     monkeypatch.setattr(download, "YTDLP_JS_RUNTIMES", "node", raising=False)
     monkeypatch.setattr(download, "YTDLP_REMOTE_COMPONENTS", "ejs:github")
     monkeypatch.setattr(download, "YTDLP_EXTRACTOR_ARGS", "youtube:player_skip=webpage;player_client=tv_embedded")
+    monkeypatch.setattr(download, "YTDLP_POT_SERVER_HOME", None)
     monkeypatch.setattr(download, "YTDLP_IMPERSONATE", None)
     monkeypatch.setattr(download, "YTDLP_COOKIES_FROM_BROWSER", None)
     monkeypatch.setattr(download, "YTDLP_COOKIES_FILE", None)
@@ -36,10 +37,17 @@ def test_yt_dlp_cmd_includes_configured_js_runtime_and_remote_components(monkeyp
     assert cmd[cmd.index("--extractor-args") + 1] == "youtube:player_skip=webpage;player_client=tv_embedded"
 
 
+def test_interview_workflow_exposes_node_to_yt_dlp():
+    workflow = (Path(__file__).parents[1] / ".github/workflows/process-interview.yml").read_text(encoding="utf-8")
+
+    assert "YTDLP_JS_RUNTIMES: node" in workflow
+
+
 def test_yt_dlp_cmd_uses_cookie_secret_without_youtube_workaround(monkeypatch):
     monkeypatch.setattr(download, "YTDLP_JS_RUNTIMES", "node", raising=False)
     monkeypatch.setattr(download, "YTDLP_REMOTE_COMPONENTS", "ejs:github")
     monkeypatch.setattr(download, "YTDLP_EXTRACTOR_ARGS", "youtube:player_skip=webpage;player_client=tv_embedded")
+    monkeypatch.setattr(download, "YTDLP_POT_SERVER_HOME", None)
     monkeypatch.setattr(download, "YTDLP_IMPERSONATE", None)
     monkeypatch.setattr(download, "YTDLP_COOKIES_FROM_BROWSER", None)
     monkeypatch.setattr(download, "YTDLP_COOKIES_FILE", None)
@@ -54,10 +62,30 @@ def test_yt_dlp_cmd_uses_cookie_secret_without_youtube_workaround(monkeypatch):
     assert "--extractor-args" not in cmd
 
 
+def test_yt_dlp_cmd_uses_po_token_provider_with_cookie_secret(monkeypatch):
+    monkeypatch.setattr(download, "YTDLP_JS_RUNTIMES", "node", raising=False)
+    monkeypatch.setattr(download, "YTDLP_REMOTE_COMPONENTS", "ejs:github")
+    monkeypatch.setattr(download, "YTDLP_EXTRACTOR_ARGS", None)
+    monkeypatch.setattr(download, "YTDLP_POT_SERVER_HOME", "/runner/bgutil/server")
+    monkeypatch.setattr(download, "YTDLP_IMPERSONATE", None)
+    monkeypatch.setattr(download, "YTDLP_COOKIES_FROM_BROWSER", None)
+    monkeypatch.setattr(download, "YTDLP_COOKIES_FILE", None)
+    monkeypatch.setattr(download, "YTDLP_COOKIES_B64", "I05ldHNjYXBlIENvb2tpZSBGaWxlCg==")
+    monkeypatch.setattr(download, "_YTDLP_COOKIES_TEMP_FILE", None)
+
+    cmd = download._yt_dlp_cmd()
+
+    assert "--cookies" in cmd
+    assert "--extractor-args" in cmd
+    assert cmd[cmd.index("--extractor-args") + 1] == ("youtubepot-bgutilscript:server_home=/runner/bgutil/server")
+
+
 def test_run_yt_dlp_error_includes_stderr(monkeypatch):
-    def fake_run(_cmd, capture_output, text):
+    def fake_run(_cmd, capture_output, text, env):
         assert capture_output is True
         assert text is True
+        assert "OPENAI_API_KEY" not in env
+        assert "BLOB_READ_WRITE_TOKEN" not in env
         return subprocess.CompletedProcess(
             args=["yt-dlp"],
             returncode=1,
@@ -68,6 +96,8 @@ def test_run_yt_dlp_error_includes_stderr(monkeypatch):
     monkeypatch.setattr(download.subprocess, "run", fake_run)
 
     with pytest.raises(download.YtDlpError) as exc:
+        monkeypatch.setenv("OPENAI_API_KEY", "must-not-leak")
+        monkeypatch.setenv("BLOB_READ_WRITE_TOKEN", "must-not-leak")
         download._run_yt_dlp(["yt-dlp", "--dump-single-json", "https://example.com/video"])
 
     assert "Sign in to confirm" in str(exc.value)
