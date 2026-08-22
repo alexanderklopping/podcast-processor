@@ -65,8 +65,8 @@ def test_structure_does_not_guess_roles_from_speaker_order(monkeypatch):
             "speakerMappings": [
                 {
                     "speaker": speaker,
-                    "label": "Onzeker",
-                    "confidence": 0.2,
+                    "label": "Speaker" if speaker == "A" else "Onzeker",
+                    "confidence": 0.99 if speaker == "A" else 0.2,
                     "role": "speaker",
                     "roleConfidence": 0.3,
                 }
