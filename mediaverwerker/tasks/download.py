@@ -296,6 +296,40 @@ def _entry_release_date(entry):
         return published
 
 
+def _search_apple_podcast_episode(query, target_title):
+    """Find an exact podcast episode in Apple Search and return its enclosure."""
+    try:
+        response = requests.get(
+            "https://itunes.apple.com/search",
+            params={
+                "term": query,
+                "media": "podcast",
+                "entity": "podcastEpisode",
+                "limit": 20,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        results = response.json().get("results", [])
+    except Exception as error:
+        logger.warning(f"Apple episode search failed: {error}")
+        return None
+
+    best_result = None
+    best_score = 0.0
+    for result in results:
+        if not result.get("episodeUrl"):
+            continue
+        score = _title_match_score(target_title, result.get("trackName", ""))
+        if score > best_score:
+            best_result = result
+            best_score = score
+
+    if best_result is None or best_score < 0.72:
+        return None
+    return best_result
+
+
 def _resolve_spotify_episode_metadata(url):
     """Resolve a Spotify episode page to the original podcast RSS enclosure."""
     episode_id = _spotify_episode_id(url)
@@ -309,7 +343,8 @@ def _resolve_spotify_episode_metadata(url):
         headers={"User-Agent": "Mediaverwerker/1.0"},
     )
     response.raise_for_status()
-    episode_title, podcast_query = _split_spotify_title(response.json().get("title", ""))
+    spotify_title = response.json().get("title", "")
+    episode_title, podcast_query = _split_spotify_title(spotify_title)
     if not episode_title:
         raise YtDlpError("Spotify oEmbed did not return an episode title")
 
@@ -330,7 +365,22 @@ def _resolve_spotify_episode_metadata(url):
             best_score = score
 
     if best_entry is None or best_score < 0.72:
-        raise YtDlpError(f"Could not match Spotify episode title in podcast RSS feed: {episode_title}")
+        apple_episode = _search_apple_podcast_episode(spotify_title, episode_title)
+        if not apple_episode:
+            raise YtDlpError(f"Could not match Spotify episode title in podcast RSS feed: {episode_title}")
+        return {
+            "id": episode_id,
+            "extractor_key": "SpotifyPodcast",
+            "title": apple_episode.get("trackName", episode_title),
+            "description": apple_episode.get("description", ""),
+            "channel": apple_episode.get("collectionName", podcast_query),
+            "language": "nl" if apple_episode.get("country") == "NLD" else "en",
+            "release_date": (apple_episode.get("releaseDate") or "")[:10],
+            "webpage_url": url,
+            "original_url": url,
+            "audio_url": apple_episode["episodeUrl"],
+            "resolved_from": "spotify",
+        }
 
     audio_url = _entry_audio_url(best_entry)
     if not audio_url:

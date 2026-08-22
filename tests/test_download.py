@@ -195,6 +195,66 @@ def test_fetch_url_metadata_resolves_spotify_episode_to_original_feed_audio(monk
     assert metadata["resolved_from"] == "spotify"
 
 
+def test_spotify_resolver_falls_back_to_exact_apple_episode(monkeypatch):
+    spotify_url = "https://open.spotify.com/episode/spotify-episode-id"
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
+
+    spotify_title = "Mark Zuckerberg on Meta's AGI Vision — 12-Minute Interview Digest"
+
+    def fake_get(url, **_kwargs):
+        if url == "https://open.spotify.com/oembed":
+            return FakeResponse({"title": spotify_title})
+        if url == "https://itunes.apple.com/search":
+            return FakeResponse(
+                {
+                    "results": [
+                        {
+                            "trackName": spotify_title,
+                            "collectionName": "Brilliant Minds' Digest",
+                            "episodeUrl": "https://audio.example.com/zuckerberg.mp3",
+                            "description": "Interview digest.",
+                            "releaseDate": "2025-05-02T08:00:00Z",
+                            "country": "USA",
+                        }
+                    ]
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(download.requests, "get", fake_get)
+    monkeypatch.setattr(
+        download,
+        "search_podcast",
+        lambda query: {"name": query, "url": "https://feeds.example.com/wrong.xml", "language": "en"},
+    )
+    monkeypatch.setattr(
+        download.feedparser,
+        "parse",
+        lambda _url: type(
+            "Feed",
+            (),
+            {"entries": [Entry(title="Unrelated episode", enclosures=[])], "bozo": False},
+        )(),
+    )
+
+    episode, metadata = download.fetch_url_metadata(spotify_url, return_raw=True)
+
+    assert episode["title"] == spotify_title
+    assert episode["podcast_name"] == "Brilliant Minds' Digest"
+    assert episode["audio_url"] == "https://audio.example.com/zuckerberg.mp3"
+    assert episode["published"] == "2025-05-02"
+    assert metadata["resolved_from"] == "spotify"
+
+
 def test_fetch_youtube_caption_transcript_uses_json3_track(monkeypatch):
     class FakeResponse:
         def raise_for_status(self):
