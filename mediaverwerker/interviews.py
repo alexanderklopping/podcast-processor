@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -20,6 +21,7 @@ logger = logging.getLogger("mediaverwerker")
 
 MINIMUM_CONTENT_RETENTION = 0.75
 MAX_TRANSCRIPTION_BYTES = 24 * 1024 * 1024
+MAX_TRANSCRIPTION_SECONDS = 300
 
 TURN_SCHEMA = {
     "type": "object",
@@ -176,20 +178,35 @@ def _transcribe_file(path, speaker_prefix=""):
 
 
 def transcribe_diarized(audio_path):
-    """Transcribe with speaker labels and timestamps, splitting only when required."""
-    if audio_path.stat().st_size <= MAX_TRANSCRIPTION_BYTES:
+    """Bound request duration as well as file size; retain every audio interval."""
+    duration = get_audio_duration(audio_path)
+    if duration is None or not math.isfinite(duration) or duration <= 0:
+        raise RuntimeError("Kan interviewduur niet vaststellen; transcriptie niet gestart")
+    if duration <= MAX_TRANSCRIPTION_SECONDS and audio_path.stat().st_size <= MAX_TRANSCRIPTION_BYTES:
         return _transcribe_file(audio_path)
 
+    chunks = [Path(chunk) for chunk in split_audio(audio_path, chunk_duration_seconds=MAX_TRANSCRIPTION_SECONDS)]
+    expected = math.ceil(duration / MAX_TRANSCRIPTION_SECONDS)
+    # split_audio skips failed ffmpeg chunks. Never silently concatenate a gap.
+    if len(chunks) != expected or any(
+        chunk.name != f"{audio_path.stem}_chunk{index:03d}.mp3" for index, chunk in enumerate(chunks)
+    ):
+        raise RuntimeError("Audio opsplitsen onvolledig; transcriptie niet gestart")
+    for index, chunk in enumerate(chunks):
+        actual = get_audio_duration(chunk)
+        required = min(MAX_TRANSCRIPTION_SECONDS, duration - index * MAX_TRANSCRIPTION_SECONDS)
+        if actual is None or not math.isfinite(actual) or abs(actual - required) > 2:
+            raise RuntimeError("Audiodeel onvolledig; transcriptie niet gestart")
+
     combined = []
-    offset = 0.0
-    for chunk_index, chunk in enumerate(split_audio(audio_path, chunk_duration_seconds=1200)):
-        chunk_path = Path(chunk)
-        turns = _transcribe_file(chunk_path, speaker_prefix=f"c{chunk_index}-")
+    for chunk_index, chunk in enumerate(chunks):
+        turns = _transcribe_file(chunk, speaker_prefix=f"c{chunk_index}-")
+        # ffmpeg cuts at these source offsets; MP3 padding must not accumulate.
+        offset = chunk_index * MAX_TRANSCRIPTION_SECONDS
         for turn in turns:
             turn["start"] += offset
             turn["end"] += offset
             combined.append(turn)
-        offset += get_audio_duration(chunk_path) or 1200
     return combined
 
 
