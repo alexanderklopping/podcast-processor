@@ -228,3 +228,28 @@ def test_persist_articles_to_feeds_repo_copies_local_markdown(tmp_path, monkeypa
     persisted = feeds_dir / "artikelen" / article.name
     assert copied == [persisted]
     assert persisted.read_text(encoding="utf-8") == "# Test Episode\n\nGenerated article."
+
+
+def test_episode_title_cannot_assign_article_to_another_podcast(tmp_path, monkeypatch):
+    from mediaverwerker.tasks import feeds
+
+    articles_dir = tmp_path / "articles"
+    feeds_dir = tmp_path / "feeds"
+    articles_dir.mkdir()
+    feeds_dir.mkdir()
+    (articles_dir / "2026-09-12_Hard Fork_The Ezra Klein Show_ The AI Revolt.md").write_text(
+        "# Hard Fork cross-promotion\n\nOriginal Hard Fork article.", encoding="utf-8"
+    )
+    (articles_dir / "2026-09-15_The Ezra Klein Show_The China Dilemma.md").write_text(
+        "# Actual Ezra episode\n\nOriginal Ezra article.", encoding="utf-8"
+    )
+    monkeypatch.setattr(feeds, "ARTICLES_DIR", articles_dir)
+    monkeypatch.setattr(feeds, "FEEDS_DIR", feeds_dir)
+    monkeypatch.setattr(feeds, "load_podcasts", lambda: [{"name": "Hard Fork"}, {"name": "The Ezra Klein Show"}])
+
+    ezra_xml = generate_rss_feed("The Ezra Klein Show").read_text(encoding="utf-8")
+    hard_fork_xml = generate_rss_feed("Hard Fork").read_text(encoding="utf-8")
+    assert "Actual Ezra episode" in ezra_xml
+    assert "Hard Fork cross-promotion" not in ezra_xml
+    assert "Hard Fork cross-promotion" in hard_fork_xml
+    assert "Actual Ezra episode" not in hard_fork_xml

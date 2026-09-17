@@ -241,7 +241,7 @@ def generate_rss_feed(podcast_name, *, feed_storage_key=None, feed_filename=None
             if metadata_storage_key:
                 if metadata_storage_key != storage_key:
                     continue
-            elif f"_{storage_key}_" in filename:
+            elif re.match(rf"^\d{{4}}-\d{{2}}-\d{{2}}_{re.escape(storage_key)}_", filename):
                 pass
             elif podcast_name == "VSR":
                 parts = filename.split("_")
