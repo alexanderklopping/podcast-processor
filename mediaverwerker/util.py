@@ -2,13 +2,17 @@
 
 import ipaddress
 import logging
+import math
 import re
 import socket
 import subprocess
 import sys
+import tempfile
 import time
+import wave
 from datetime import datetime
 from functools import wraps
+from pathlib import Path
 from urllib.parse import urlparse
 
 from .config import LOGS_DIR, MAX_RETRIES, RETRY_DELAY_SECONDS
@@ -138,55 +142,65 @@ def get_audio_duration(audio_path):
 
 
 def split_audio(audio_path, chunk_duration_seconds=600):
-    """Split audio file into chunks using ffmpeg."""
-    logger = logging.getLogger("mediaverwerker")
-    chunks_dir = audio_path.parent / "chunks"
-    chunks_dir.mkdir(exist_ok=True)
-
-    total_duration = get_audio_duration(audio_path)
-    if total_duration is None:
-        file_size_mb = audio_path.stat().st_size / (1024 * 1024)
-        total_duration = file_size_mb * 60
-
-    chunk_paths = []
-    chunk_index = 0
-    start_time = 0
-
-    while start_time < total_duration:
-        chunk_filename = f"{audio_path.stem}_chunk{chunk_index:03d}.mp3"
-        chunk_path = chunks_dir / chunk_filename
-
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(audio_path),
-            "-ss",
-            str(start_time),
-            "-t",
-            str(chunk_duration_seconds),
-            "-acodec",
-            "libmp3lame",
-            "-ab",
-            "64k",
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            str(chunk_path),
-        ]
-
-        try:
-            subprocess.run(cmd, capture_output=True, check=True)
-            if chunk_path.exists() and chunk_path.stat().st_size > 0:
-                chunk_paths.append(chunk_path)
-                logger.debug(f"Created chunk {chunk_index + 1}: {chunk_filename}")
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to create chunk {chunk_index}: {e}")
-
-        start_time += chunk_duration_seconds
-        chunk_index += 1
-
+    """Split decoded audio in one pass, without trusting container duration."""
+    if not math.isfinite(chunk_duration_seconds) or chunk_duration_seconds <= 0:
+        raise ValueError("Chunk duration must be positive and finite")
+    chunks_root = audio_path.parent / "chunks"
+    chunks_root.mkdir(exist_ok=True)
+    # A new output directory prevents old chunks from entering a shorter retry.
+    chunks_dir = Path(tempfile.mkdtemp(prefix="split-", dir=chunks_root))
+    # Decode once to PCM. MP3 container duration can overstate the real audio,
+    # while segmenting encoded MP3 directly loses encoder-delay samples at cuts.
+    with tempfile.TemporaryDirectory(prefix="decode-", dir=chunks_root) as temp_dir:
+        decoded = Path(temp_dir) / "audio.wav"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(audio_path),
+                "-map",
+                "0:a:0",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                str(decoded),
+            ],
+            capture_output=True,
+            check=True,
+        )
+        with wave.open(str(decoded), "rb") as audio:
+            frame_count = audio.getnframes()
+            sample_rate = audio.getframerate()
+        chunk_frames = max(1, round(chunk_duration_seconds * sample_rate))
+        chunk_paths = []
+        for index, start_frame in enumerate(range(0, frame_count, chunk_frames)):
+            chunk_path = chunks_dir / f"{audio_path.stem}_chunk{index:03d}.mp3"
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-ss",
+                    str(start_frame / sample_rate),
+                    "-i",
+                    str(decoded),
+                    "-t",
+                    str(chunk_frames / sample_rate),
+                    "-acodec",
+                    "libmp3lame",
+                    "-ab",
+                    "64k",
+                    str(chunk_path),
+                ],
+                capture_output=True,
+                check=True,
+            )
+            chunk_paths.append(chunk_path)
     return chunk_paths
 
 
