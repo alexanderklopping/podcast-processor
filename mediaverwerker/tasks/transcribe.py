@@ -242,7 +242,7 @@ def transcribe_audio(audio_path, language="en", timestamps=False):
                     pass
 
         # Clean up chunks directory
-        chunks_dir = audio_path.parent / "chunks"
+        chunks_dir = chunk_paths[0].parent
         try:
             if chunks_dir.exists() and not any(chunks_dir.iterdir()):
                 chunks_dir.rmdir()

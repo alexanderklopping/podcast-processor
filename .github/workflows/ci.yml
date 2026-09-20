@@ -26,4 +26,5 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
       - run: pip install -e ".[dev]"
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: pytest -v
