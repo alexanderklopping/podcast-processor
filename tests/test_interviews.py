@@ -201,3 +201,28 @@ def test_process_interview_always_downloads_audio_and_reports_fixed_statuses(mon
     assert any(status == "download-called" for status, _kwargs in calls)
     assert result["audio"]["durationSec"] == 61.5
     assert "sourcePublishedAt" not in result
+
+
+def test_transcribe_file_gives_zero_length_segments_a_positive_duration(monkeypatch, tmp_path):
+    segments = [
+        {"speaker": "A", "start": 5.0, "end": 5.0, "text": "Ja."},
+        {"speaker": "B", "start": 6.0, "end": 5.5, "text": "Nee."},
+        {"speaker": "A", "start": 7.0, "end": 9.0, "text": "Goed."},
+    ]
+
+    class FakeTranscriptions:
+        def create(self, **kwargs):
+            return {"segments": segments}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.audio = type("Audio", (), {"transcriptions": FakeTranscriptions()})()
+
+    monkeypatch.setattr(interviews, "OpenAI", FakeClient)
+    audio = tmp_path / "chunk.mp3"
+    audio.write_bytes(b"audio")
+
+    turns = interviews._transcribe_file(audio)
+
+    assert all(turn["end"] > turn["start"] for turn in turns)
+    assert turns[2]["end"] == 9.0
