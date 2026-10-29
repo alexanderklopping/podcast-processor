@@ -141,6 +141,9 @@ def normalize_audio(source_path, interview_id):
     return output_path
 
 
+MIN_TURN_SECONDS = 0.01
+
+
 def _value(value, name, default=None):
     if isinstance(value, dict):
         return value.get(name, default)
@@ -163,12 +166,16 @@ def _transcribe_file(path, speaker_prefix=""):
         if not text:
             continue
         speaker = str(_value(segment, "speaker", "Spreker 1"))
+        start = float(_value(segment, "start", 0))
+        # Diarization occasionally returns zero-length segments; the RSS Reader
+        # callback rejects any turn whose end is not after its start.
+        end = max(float(_value(segment, "end", 0)), start + MIN_TURN_SECONDS)
         turns.append(
             {
                 "id": f"{speaker_prefix}{index}",
                 "speaker": f"{speaker_prefix}{speaker}",
-                "start": float(_value(segment, "start", 0)),
-                "end": float(_value(segment, "end", 0)),
+                "start": start,
+                "end": end,
                 "text": text,
             }
         )
